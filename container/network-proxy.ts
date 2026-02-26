@@ -1,0 +1,588 @@
+/**
+ * network-proxy.ts — Bun-based MITM proxy for sandbox network policy enforcement.
+ *
+ * Runs inside a hardened container on port 3128.
+ * HTTP: inspects method + URL, allow/deny per policy.
+ * HTTPS CONNECT: terminates TLS with dynamic certs signed by baked-in CA,
+ *   inspects decrypted request, allow/deny per policy.
+ *
+ * Env: PROXY_POLICY (JSON) — defaults to strict policy.
+ */
+
+import { readFileSync } from "fs";
+import { createServer as createNetServer, Socket } from "net";
+import { spawn } from "child_process";
+
+const CA_CERT = readFileSync("/opt/proxy/ca.pem", "utf-8");
+const CA_KEY = readFileSync("/opt/proxy/ca-key.pem", "utf-8");
+const PORT = 3128;
+
+// ── Policy ──────────────────────────────────────────────────────────────────
+
+interface ScopedAllowRule {
+  host: string;       // e.g. "api.example.com"
+  pathPrefix: string; // e.g. "/v1/projects/my-project/"
+}
+
+interface StrictPolicy {
+  allowedMethods: string[];
+  blockBody: boolean;
+  maxUrlLength: number;       // path + query combined
+  maxHeaderBytes: number;
+  rateLimitPerDomain: number; // req/min
+  burstThreshold: number;     // max requests in 5s window
+  outboundByteBudget: number; // bytes/min across URLs + headers
+  entropyThreshold: number;   // Shannon entropy — flag encoded data in URL (0-8, base64 ≈ 5.5+)
+  bypassHosts: string[];
+  scopedAllowRules: ScopedAllowRule[]; // MCP tool hosts — allow all methods for specific project paths
+}
+
+// Non-provider-specific bypass hosts always allowed through the proxy
+const BASE_BYPASS_HOSTS = ["host.containers.internal", "http-intake.logs.us5.datadoghq.com", "registry.npmjs.org"];
+
+// Provider-specific bypass hosts come from PROXY_BYPASS_HOSTS env var (comma-separated)
+// e.g. "api.anthropic.com,statsig.anthropic.com" for Claude
+const providerBypassHosts = (process.env.PROXY_BYPASS_HOSTS || "api.anthropic.com,statsig.anthropic.com")
+  .split(",")
+  .map((h) => h.trim())
+  .filter(Boolean);
+
+const DEFAULT_POLICY: StrictPolicy = {
+  allowedMethods: ["GET"],
+  blockBody: true,
+  maxUrlLength: 200,
+  maxHeaderBytes: 4096,
+  rateLimitPerDomain: 30,
+  burstThreshold: 10,
+  outboundByteBudget: 51200, // 50KB/min
+  entropyThreshold: 4.0,     // normal URLs ~2.5-3.5, base64/hex ~4.3-6.0
+  bypassHosts: [...BASE_BYPASS_HOSTS, ...providerBypassHosts],
+  scopedAllowRules: [],
+};
+
+const policy: StrictPolicy = (() => {
+  try {
+    const env = process.env.PROXY_POLICY;
+    if (!env) return DEFAULT_POLICY;
+    const parsed = JSON.parse(env);
+    return {
+      ...DEFAULT_POLICY,
+      ...parsed,
+      // Merge arrays instead of replacing
+      bypassHosts: [...DEFAULT_POLICY.bypassHosts, ...(parsed.bypassHosts || [])],
+      scopedAllowRules: parsed.scopedAllowRules || [],
+    };
+  } catch {
+    return DEFAULT_POLICY;
+  }
+})();
+
+// ── Rate limiting / anomaly detection ───────────────────────────────────────
+
+interface DomainCounters {
+  minuteCount: number;
+  minuteStart: number;
+  burstCount: number;
+  burstStart: number;
+  outboundBytes: number;
+  outboundStart: number;
+}
+
+const domainCounters = new Map<string, DomainCounters>();
+
+function getCounters(domain: string): DomainCounters {
+  let c = domainCounters.get(domain);
+  const now = Date.now();
+  if (!c) {
+    c = { minuteCount: 0, minuteStart: now, burstCount: 0, burstStart: now, outboundBytes: 0, outboundStart: now };
+    domainCounters.set(domain, c);
+    return c;
+  }
+  if (now - c.minuteStart > 60_000) {
+    c.minuteCount = 0;
+    c.minuteStart = now;
+    c.outboundBytes = 0;
+    c.outboundStart = now;
+  }
+  if (now - c.burstStart > 5_000) {
+    c.burstCount = 0;
+    c.burstStart = now;
+  }
+  return c;
+}
+
+function checkRateLimits(domain: string, pathLength: number, headerBytes: number): string | null {
+  const c = getCounters(domain);
+  c.minuteCount++;
+  c.burstCount++;
+  c.outboundBytes += pathLength + headerBytes;
+
+  if (c.minuteCount > policy.rateLimitPerDomain) {
+    return `rate_limit: ${c.minuteCount}/${policy.rateLimitPerDomain} req/min for ${domain}`;
+  }
+  if (c.burstCount > policy.burstThreshold) {
+    return `burst: ${c.burstCount} req in 5s for ${domain}`;
+  }
+  if (c.outboundBytes > policy.outboundByteBudget) {
+    return `outbound_budget: ${c.outboundBytes}/${policy.outboundByteBudget} bytes/min for ${domain}`;
+  }
+  return null;
+}
+
+// ── Request inspection ──────────────────────────────────────────────────────
+
+const STANDARD_HEADERS = new Set([
+  "host", "user-agent", "accept", "accept-language", "accept-encoding",
+  "connection", "cache-control", "pragma", "referer", "origin",
+  "content-type", "content-length", "transfer-encoding",
+  "authorization", "cookie", "if-modified-since", "if-none-match",
+  "range", "te", "upgrade-insecure-requests",
+]);
+
+// Shannon entropy — measures randomness/density of information in a string.
+// Normal URL paths (e.g. /api/users/list) have entropy ~2.5-3.5.
+// Base64/hex-encoded data (e.g. /aGVsbG8gd29ybGQ=) has entropy ~4.5-6.0.
+// Used to detect data exfiltration encoded in URL paths.
+function shannonEntropy(s: string): number {
+  if (s.length === 0) return 0;
+  const freq = new Map<string, number>();
+  for (const ch of s) {
+    freq.set(ch, (freq.get(ch) ?? 0) + 1);
+  }
+  let entropy = 0;
+  for (const count of freq.values()) {
+    const p = count / s.length;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+function inspectRequest(method: string, url: string, headers: Record<string, string>, hasBody: boolean, domain: string): { allowed: boolean; reason: string } {
+  if (policy.bypassHosts.some((h) => domain === h || domain.endsWith(`.${h}`))) {
+    return { allowed: true, reason: "bypass_host" };
+  }
+
+  // Parse URL early — needed for both scoped allow and length/entropy checks
+  let urlPart = url;
+  try {
+    const parsed = new URL(url.startsWith("http") ? url : `http://${domain}${url}`);
+    urlPart = parsed.pathname + parsed.search;
+  } catch {
+    return { allowed: false, reason: "invalid_url" };
+  }
+
+  // Scoped allow — matches host + URL path prefix, allows all methods (POST, PUT, etc.)
+  for (const rule of policy.scopedAllowRules) {
+    if ((domain === rule.host || domain.endsWith(`.${rule.host}`)) && urlPart.startsWith(rule.pathPrefix)) {
+      return { allowed: true, reason: "scoped_allow" };
+    }
+  }
+
+  // Method check
+  if (!policy.allowedMethods.includes(method.toUpperCase())) {
+    return { allowed: false, reason: `method_blocked: ${method}` };
+  }
+
+  // URL length check (path + query combined — blocks encoding in either)
+  if (urlPart.length > policy.maxUrlLength) {
+    return { allowed: false, reason: `url_too_long: ${urlPart.length}/${policy.maxUrlLength}` };
+  }
+
+  // Anomaly detection on URL path segments — catches data encoded in paths
+  // Strip query string first — only analyze the path, not query parameters
+  // (query params like ?ref=fix/9 have high-entropy chars like ? and = that cause false positives)
+  const pathOnly = urlPart.split("?")[0];
+  // URL-decode first so %2f/%3d/%20 don't inflate entropy
+  // Re-split after decoding: encoded slashes (e.g. user%2Frepo) decode to
+  // multi-part strings — check each sub-part independently
+  const segments = pathOnly.split("/").flatMap((s) => {
+    try { return decodeURIComponent(s).split("/"); } catch { return [s]; }
+  }).filter((s) => s.length > 16);
+  for (const seg of segments) {
+    // 1. Encoding pattern detection — base64 or hex strings are suspicious in URLs
+    // Threshold at 48 chars: normal URLs can have UUIDs (32 hex), long slugs, etc.
+    // 48 base64 chars = 36 bytes — enough headroom for legitimate IDs
+    if (seg.length > 48 && /^[A-Za-z0-9+/=]+$/.test(seg)) {
+      return { allowed: false, reason: `base64_pattern: "${seg.slice(0, 30)}..." (${seg.length} chars)` };
+    }
+    if (seg.length > 48 && /^[0-9a-fA-F]+$/.test(seg)) {
+      return { allowed: false, reason: `hex_pattern: "${seg.slice(0, 30)}..." (${seg.length} chars)` };
+    }
+
+    // 2. Shannon entropy — catches other high-density encoding schemes
+    const entropy = shannonEntropy(seg);
+    if (entropy > policy.entropyThreshold) {
+      return { allowed: false, reason: `high_entropy_url: ${entropy.toFixed(2)} in "${seg.slice(0, 30)}..."` };
+    }
+  }
+
+  // Body check
+  if (policy.blockBody && hasBody) {
+    return { allowed: false, reason: "body_blocked" };
+  }
+
+  // Header size check
+  let headerSize = 0;
+  for (const [key, value] of Object.entries(headers)) {
+    headerSize += key.length + (value?.length ?? 0);
+  }
+  if (headerSize > policy.maxHeaderBytes) {
+    return { allowed: false, reason: `headers_too_large: ${headerSize}/${policy.maxHeaderBytes}` };
+  }
+
+  // Rate limits + outbound byte budget
+  const rateResult = checkRateLimits(domain, urlPart.length, headerSize);
+  if (rateResult) {
+    return { allowed: false, reason: rateResult };
+  }
+
+  return { allowed: true, reason: "allowed" };
+}
+
+function extractTaskId(headers: Record<string, string>): string {
+  const auth = headers["proxy-authorization"] ?? "";
+  if (!auth.startsWith("Basic ")) return "";
+  try {
+    const decoded = atob(auth.slice(6));
+    const user = decoded.split(":")[0] ?? "";
+    return user;
+  } catch {
+    return "";
+  }
+}
+
+function log(action: "ALLOW" | "BLOCK", method: string, target: string, reason: string, taskId?: string) {
+  const ts = new Date().toISOString();
+  const tag = taskId ? ` [${taskId}]` : "";
+  console.log(`[${ts}]${tag} [${action}] ${method} ${target} ${reason}`);
+}
+
+// ── Dynamic cert generation ─────────────────────────────────────────────────
+
+const certCache = new Map<string, { cert: string; key: string }>();
+
+function generateCertForHost(hostname: string): Promise<{ cert: string; key: string }> {
+  const cached = certCache.get(hostname);
+  if (cached) return Promise.resolve(cached);
+
+  const id = Math.random().toString(36).slice(2, 10);
+  const keyFile = `/tmp/cert-${id}.key`;
+  const csrFile = `/tmp/cert-${id}.csr`;
+  const certFile = `/tmp/cert-${id}.crt`;
+
+  const script = [
+    `openssl ecparam -genkey -name prime256v1 -noout -out ${keyFile}`,
+    `openssl req -new -key ${keyFile} -subj "/CN=${hostname}" -addext "subjectAltName=DNS:${hostname}" -out ${csrFile}`,
+    `openssl x509 -req -in ${csrFile} -CA /opt/proxy/ca.pem -CAkey /opt/proxy/ca-key.pem -CAserial /tmp/ca.srl -CAcreateserial -days 1 -copy_extensions copyall -out ${certFile}`,
+  ].join(" && ");
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn("sh", ["-c", script], { stdio: ["pipe", "pipe", "pipe"] });
+    let stderr = "";
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.on("close", (code) => {
+      try {
+        if (code !== 0) {
+          spawn("sh", ["-c", `rm -f ${keyFile} ${csrFile} ${certFile}`]);
+          return reject(new Error(`cert generation failed (exit ${code}): ${stderr}`));
+        }
+        const keyPem = readFileSync(keyFile, "utf-8");
+        const certPem = readFileSync(certFile, "utf-8");
+        spawn("sh", ["-c", `rm -f ${keyFile} ${csrFile} ${certFile}`]);
+        const result = { cert: certPem, key: keyPem };
+        certCache.set(hostname, result);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+// ── Strip non-standard headers ──────────────────────────────────────────────
+
+function stripNonStandardHeaders(headers: Record<string, string>): Record<string, string> {
+  const cleaned: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (STANDARD_HEADERS.has(key.toLowerCase())) {
+      cleaned[key] = value;
+    }
+  }
+  return cleaned;
+}
+
+// ── Parse HTTP request line + headers from raw bytes ────────────────────────
+
+function parseHttpHeaders(buf: Buffer): { method: string; path: string; headers: Record<string, string>; headerEndIndex: number } | null {
+  const str = buf.toString("utf-8");
+  const headerEnd = str.indexOf("\r\n\r\n");
+  if (headerEnd === -1) return null;
+
+  const headerSection = str.slice(0, headerEnd);
+  const lines = headerSection.split("\r\n");
+  const parts = (lines[0] ?? "").split(" ");
+  const method = parts[0] ?? "GET";
+  const path = parts[1] ?? "/";
+
+  const headers: Record<string, string> = {};
+  for (let i = 1; i < lines.length; i++) {
+    const colonIdx = lines[i].indexOf(":");
+    if (colonIdx > 0) {
+      headers[lines[i].slice(0, colonIdx).trim().toLowerCase()] = lines[i].slice(colonIdx + 1).trim();
+    }
+  }
+
+  return { method, path, headers, headerEndIndex: headerEnd + 4 };
+}
+
+// ── HTTP request handler (plain HTTP proxy) ─────────────────────────────────
+
+function handleHttpRequest(clientSocket: Socket, data: Buffer) {
+  const parsed = parseHttpHeaders(data);
+  if (!parsed) {
+    clientSocket.destroy();
+    return;
+  }
+
+  const { method, path: url } = parsed;
+  const taskId = extractTaskId(parsed.headers);
+  let domain = "";
+  let logTarget = url;
+  try {
+    const p = new URL(url);
+    domain = p.hostname;
+    logTarget = `${p.hostname}${p.pathname}${p.search}`;
+  } catch {
+    domain = (parsed.headers["host"] ?? "").split(":")[0];
+    logTarget = `${domain}${url}`;
+  }
+
+  const hasBody = (parseInt(parsed.headers["content-length"] ?? "0") > 0) ||
+    parsed.headers["transfer-encoding"] === "chunked";
+  const cleanHeaders = stripNonStandardHeaders(parsed.headers);
+  const result = inspectRequest(method, url, cleanHeaders, hasBody, domain);
+
+  if (!result.allowed) {
+    log("BLOCK", method, logTarget, result.reason, taskId);
+    clientSocket.write(`HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBlocked by network policy: ${result.reason}\n`);
+    clientSocket.destroy();
+    return;
+  }
+
+  log("ALLOW", method, logTarget, result.reason, taskId);
+
+  // Forward to upstream
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    clientSocket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+    clientSocket.destroy();
+    return;
+  }
+
+  const upstreamPort = parseInt(parsedUrl.port) || 80;
+  const upstream = new Socket();
+  upstream.connect(upstreamPort, parsedUrl.hostname, () => {
+    // Rewrite the request line to use path-only (not absolute URL)
+    const reqLine = `${method} ${parsedUrl.pathname}${parsedUrl.search} HTTP/1.1\r\n`;
+    const headerLines = Object.entries(cleanHeaders).map(([k, v]) => `${k}: ${v}`).join("\r\n");
+    const bodyPart = data.slice(parsed.headerEndIndex);
+    upstream.write(`${reqLine}${headerLines}\r\n\r\n`);
+    if (bodyPart.length > 0) upstream.write(bodyPart);
+    clientSocket.pipe(upstream);
+    upstream.pipe(clientSocket);
+  });
+
+  upstream.on("error", (err) => {
+    log("BLOCK", method, logTarget, `upstream_error: ${err.message}`, taskId);
+    clientSocket.write(`HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nProxy error: ${err.message}\n`);
+    clientSocket.destroy();
+  });
+  clientSocket.on("error", () => upstream.destroy());
+}
+
+// ── HTTPS CONNECT handler ───────────────────────────────────────────────────
+
+// Map of active MITM TLS listeners keyed by hostname
+const mitmListeners = new Map<string, { port: number; server: any }>();
+// Track last task ID per hostname for MITM inner request logging
+const hostTaskIds = new Map<string, string>();
+
+async function getOrCreateMitmListener(hostname: string, upstreamPort: number): Promise<number> {
+  const existing = mitmListeners.get(hostname);
+  if (existing) return existing.port;
+
+  const hostCert = await generateCertForHost(hostname);
+
+  const mitmServer = Bun.serve({
+    port: 0, // random available port
+    hostname: "127.0.0.1",
+    tls: {
+      cert: hostCert.cert,
+      key: hostCert.key,
+    },
+    async fetch(req) {
+      const url = new URL(req.url);
+      const method = req.method;
+      const path = url.pathname + url.search;
+      const fullUrl = `https://${hostname}${path}`;
+      const tid = hostTaskIds.get(hostname) ?? "";
+
+      const headers: Record<string, string> = {};
+      req.headers.forEach((v, k) => { headers[k] = v; });
+      const cleanHeaders = stripNonStandardHeaders(headers);
+
+      const hasBody = (parseInt(headers["content-length"] ?? "0") > 0) ||
+        headers["transfer-encoding"] === "chunked";
+      const result = inspectRequest(method, fullUrl, cleanHeaders, hasBody, hostname);
+
+      if (!result.allowed) {
+        log("BLOCK", method, `${hostname}${path}`, result.reason, tid);
+        return new Response(`Blocked by network policy: ${result.reason}\n`, { status: 403 });
+      }
+
+      log("ALLOW", method, `${hostname}${path}`, result.reason, tid);
+
+      // Forward to actual upstream
+      try {
+        const upstreamUrl = `https://${hostname}:${upstreamPort}${path}`;
+        const forwardHeaders = new Headers();
+        for (const [k, v] of Object.entries(cleanHeaders)) {
+          if (k !== "host") forwardHeaders.set(k, v);
+        }
+        forwardHeaders.set("host", hostname);
+
+        const upstreamResp = await fetch(upstreamUrl, {
+          method,
+          headers: forwardHeaders,
+          body: hasBody ? req.body : undefined,
+          redirect: "manual",
+        });
+
+        // Bun's fetch auto-decompresses the body but keeps Content-Encoding.
+        // Strip it so the client doesn't try to decompress again.
+        const respHeaders = new Headers(upstreamResp.headers);
+        respHeaders.delete("content-encoding");
+        respHeaders.delete("content-length");
+
+        return new Response(upstreamResp.body, {
+          status: upstreamResp.status,
+          statusText: upstreamResp.statusText,
+          headers: respHeaders,
+        });
+      } catch (err: any) {
+        log("BLOCK", method, `${hostname}${path}`, `upstream_error: ${err.message}`, tid);
+        return new Response(`Proxy error: ${err.message}\n`, { status: 502 });
+      }
+    },
+  });
+
+  const port = mitmServer.port!;
+  mitmListeners.set(hostname, { port, server: mitmServer });
+  return port;
+}
+
+async function handleConnect(clientSocket: Socket, hostname: string, upstreamPort: number, taskId: string) {
+  // Bypass hosts — tunnel directly without MITM
+  if (policy.bypassHosts.some((h) => hostname === h || hostname.endsWith(`.${h}`))) {
+    log("ALLOW", "CONNECT", `${hostname}:${upstreamPort}`, "bypass_host", taskId);
+    const upstream = new Socket();
+    upstream.connect(upstreamPort, hostname, () => {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      upstream.pipe(clientSocket);
+      clientSocket.pipe(upstream);
+    });
+    upstream.on("error", () => clientSocket.destroy());
+    clientSocket.on("error", () => upstream.destroy());
+    return;
+  }
+
+  // Store task ID for this hostname so MITM inner requests can log it
+  if (taskId) hostTaskIds.set(hostname, taskId);
+
+  // Get or create a MITM TLS listener for this hostname
+  let localPort: number;
+  try {
+    localPort = await getOrCreateMitmListener(hostname, upstreamPort);
+  } catch (err: any) {
+    log("BLOCK", "CONNECT", `${hostname}:${upstreamPort}`, `mitm_error: ${err.message}`, taskId);
+    clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    clientSocket.destroy();
+    return;
+  }
+
+  // Tell client the tunnel is established, then pipe to local MITM server
+  clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+
+  const localConn = new Socket();
+  localConn.connect(localPort, "127.0.0.1", () => {
+    localConn.pipe(clientSocket);
+    clientSocket.pipe(localConn);
+  });
+  localConn.on("error", () => clientSocket.destroy());
+  clientSocket.on("error", () => localConn.destroy());
+}
+
+// ── Main server (raw TCP) ───────────────────────────────────────────────────
+// We use a raw TCP server so we can handle both HTTP and CONNECT in one place.
+
+const server = createNetServer((clientSocket: Socket) => {
+  let buffer = Buffer.alloc(0);
+  let handled = false;
+
+  const onData = (chunk: Buffer) => {
+    if (handled) return;
+    buffer = Buffer.concat([buffer, chunk]);
+
+    const str = buffer.toString("utf-8");
+    const firstLineEnd = str.indexOf("\r\n");
+    if (firstLineEnd === -1) return; // Wait for full first line
+
+    const firstLine = str.slice(0, firstLineEnd);
+    const parts = firstLine.split(" ");
+
+    if (parts[0] === "CONNECT") {
+      // HTTPS CONNECT — need full headers before handling
+      const headerEnd = str.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+
+      handled = true;
+      clientSocket.removeListener("data", onData);
+
+      // Parse headers to extract task ID from Proxy-Authorization
+      const connectHeaders: Record<string, string> = {};
+      const headerLines = str.slice(0, headerEnd).split("\r\n");
+      for (let i = 1; i < headerLines.length; i++) {
+        const colonIdx = headerLines[i].indexOf(":");
+        if (colonIdx > 0) {
+          connectHeaders[headerLines[i].slice(0, colonIdx).trim().toLowerCase()] = headerLines[i].slice(colonIdx + 1).trim();
+        }
+      }
+      const taskId = extractTaskId(connectHeaders);
+
+      const [hostname, portStr] = (parts[1] ?? "").split(":");
+      const port = parseInt(portStr) || 443;
+      handleConnect(clientSocket, hostname, port, taskId);
+    } else {
+      // HTTP request — need full headers before handling
+      const headerEnd = str.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+
+      handled = true;
+      clientSocket.removeListener("data", onData);
+      handleHttpRequest(clientSocket, buffer);
+    }
+  };
+
+  clientSocket.on("data", onData);
+  clientSocket.on("error", () => {});
+});
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`[proxy] Network proxy listening on port ${PORT}`);
+  console.log(`[proxy] Policy: ${JSON.stringify(policy)}`);
+});
+
+process.on("SIGTERM", () => { console.log("[proxy] Shutting down..."); server.close(); process.exit(0); });
+process.on("SIGINT", () => { console.log("[proxy] Shutting down..."); server.close(); process.exit(0); });

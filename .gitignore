@@ -1,0 +1,26 @@
+# Environment (contains secrets)
+.env
+.mcp.json
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Bun
+bun.lockb
+
+# OS
+.DS_Store
+
+# Claude local settings
+.claude/settings.local.json
+
+# Generated CA cert (contains private key) — created by build:images, never commit
+container/ca.pem
+container/ca-key.pem
+
+# Runtime data
+.ysa/

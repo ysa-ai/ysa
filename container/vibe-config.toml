@@ -1,0 +1,6 @@
+[agent]
+auto_approve = true
+no_update_check = true
+
+[permissions]
+# Tool list populated at runtime via --enabled-tools flags

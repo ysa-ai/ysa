@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1771200000000,
+      "tag": "0001_create_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1771200001000,
+      "tag": "0002_create_container_peaks",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1771200002000,
+      "tag": "0003_add_network_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1771200003000,
+      "tag": "0004_add_provider_model",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1771200004000,
+      "tag": "0005_add_allowed_hosts",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1771200005000,
+      "tag": "0006_add_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1771200006000,
+      "tag": "0007_add_preferred_terminal",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1771200007000,
+      "tag": "0008_add_api_keys_port",
+      "breakpoints": true
+    }
+  ]
+}

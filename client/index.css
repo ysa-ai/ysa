@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+@theme {
+  /* Neutral dark base — no blue tint */
+  --color-bg: #111113;
+  --color-bg-raised: #19191b;
+  --color-bg-surface: #232326;
+  --color-bg-surface-bright: #2c2c30;
+  --color-bg-inset: #0c0c0e;
+  --color-bg-overlay: rgba(0, 0, 0, 0.65);
+  --color-sidebar: #141416;
+  --color-border: #2e2f33;
+  --color-border-bright: #3e3f44;
+  --color-border-subtle: #252628;
+
+  /* Text — neutral scale, WCAG AA compliant */
+  --color-text-primary: #ededef;
+  --color-text-secondary: #9d9fa3;
+  --color-text-muted: #78797d;
+  --color-text-faint: #5f6064;
+
+  /* Primary — blue (buttons, links, informational) */
+  --color-primary: #3b82f6;
+  --color-primary-subtle: rgba(59, 130, 246, 0.12);
+  --color-primary-muted: #60a5fa;
+
+  /* Accent — indigo (buttons, CTAs, selected states) */
+  --color-accent: #6366f1;
+  --color-accent-hover: #4f46e5;
+  --color-accent-subtle: rgba(99, 102, 241, 0.14);
+  --color-accent-muted: #a5b4fc;
+
+  /* Semantic — desaturated for dark backgrounds */
+  --color-ok: #4ade80;
+  --color-ok-bg: rgba(74, 222, 128, 0.12);
+  --color-warn: #fbbf24;
+  --color-warn-bg: rgba(251, 191, 36, 0.12);
+  --color-err: #f87171;
+  --color-err-bg: rgba(248, 113, 113, 0.12);
+
+  --color-muted: #78797d;
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono", "SF Mono", "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-theme="light"] {
+  --color-bg: #F4F4F5;
+  --color-bg-raised: #FFFFFF;
+  --color-bg-surface: #E4E4E7;
+  --color-bg-surface-bright: #D9D9DD;
+  --color-bg-inset: #DCDCDF;
+  --color-sidebar: #EBEBEC;
+  --color-bg-overlay: rgba(0, 0, 0, 0.18);
+  --color-border: #D4D4D8;
+  --color-border-bright: #BCBCC4;
+  --color-border-subtle: #E4E4E7;
+  --color-text-primary: #18181B;
+  --color-text-secondary: #3F3F46;
+  --color-text-muted: #71717A;
+  --color-text-faint: #A1A1AA;
+  --color-primary: #2563EB;
+  --color-primary-subtle: rgba(37, 99, 235, 0.08);
+  --color-primary-muted: #3B82F6;
+  --color-accent: #4f46e5;
+  --color-accent-hover: #4338ca;
+  --color-accent-subtle: rgba(79, 70, 229, 0.07);
+  --color-accent-muted: #6366f1;
+  --color-ok: #16a34a;
+  --color-ok-bg: rgba(22, 163, 74, 0.08);
+  --color-warn: #d97706;
+  --color-warn-bg: rgba(217, 119, 6, 0.08);
+  --color-err: #dc2626;
+  --color-err-bg: rgba(220, 38, 38, 0.08);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Rendered markdown in result tab */
+.result-markdown {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-text-primary);
+}
+.result-markdown h1 { font-size: 1.4em; font-weight: 700; margin: 0 0 0.8em; }
+.result-markdown h2 { font-size: 1.15em; font-weight: 600; margin: 1.2em 0 0.5em; }
+.result-markdown h3 { font-size: 1em; font-weight: 600; margin: 1em 0 0.4em; }
+.result-markdown p { margin: 0.5em 0; }
+.result-markdown ul, .result-markdown ol { margin: 0.4em 0; padding-left: 1.5em; }
+.result-markdown li { margin: 0.2em 0; }
+.result-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-bg-surface);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+}
+.result-markdown pre {
+  background: var(--color-bg-inset);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.result-markdown pre code {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+}
+.result-markdown strong { font-weight: 600; }
+.result-markdown a { color: var(--color-primary); text-decoration: underline; }
+.result-markdown hr { border: none; border-top: 1px solid var(--color-border); margin: 1em 0; }
+.result-markdown table { width: 100%; border-collapse: collapse; margin: 0.6em 0; font-size: 12px; }
+.result-markdown th, .result-markdown td {
+  border: 1px solid var(--color-border);
+  padding: 0.5em 0.7em;
+  text-align: left;
+}
+.result-markdown th { background: var(--color-bg-surface); font-weight: 600; }

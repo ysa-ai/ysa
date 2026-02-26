@@ -1,0 +1,112 @@
+import { resolve } from "path";
+
+const PROXY_CONTAINER_NAME = "ysa-proxy";
+const PROXY_PORT = 3128;
+const IMAGE = "sandbox-proxy";
+const SECCOMP_PROFILE = resolve(import.meta.dir, "..", "..", "container", "seccomp.json");
+
+export interface ScopedAllowRule {
+  host: string;       // e.g. "api.example.com"
+  pathPrefix: string; // e.g. "/v1/projects/my-project/"
+}
+
+const DEFAULT_BYPASS_HOSTS = ["api.anthropic.com", "statsig.anthropic.com"];
+
+// Track current state so we know if proxy needs restart
+let currentRules: ScopedAllowRule[] = [];
+let currentBypassHosts: string[] = DEFAULT_BYPASS_HOSTS;
+
+async function runShell(cmd: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(["bash", "-c", cmd], { stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const exitCode = await proc.exited;
+  return { ok: exitCode === 0, stdout: stdout.trim(), stderr: stderr.trim() };
+}
+
+export async function isProxyRunning(): Promise<boolean> {
+  const { ok, stdout } = await runShell(
+    `podman ps --filter name=${PROXY_CONTAINER_NAME} --format '{{.Names}}' 2>/dev/null`,
+  );
+  return ok && stdout.includes(PROXY_CONTAINER_NAME);
+}
+
+export async function startProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: string[]): Promise<void> {
+  if (await isProxyRunning()) return;
+
+  // Clean up any stopped container with the same name or any container holding our port
+  await runShell(`podman rm -f ${PROXY_CONTAINER_NAME} 2>/dev/null || true`);
+  const { stdout: portUsers } = await runShell(
+    `podman ps --format '{{.Names}}' --filter publish=${PROXY_PORT} 2>/dev/null`,
+  );
+  for (const name of portUsers.split("\n").filter(Boolean)) {
+    await runShell(`podman stop ${name} 2>/dev/null || true`);
+    await runShell(`podman rm -f ${name} 2>/dev/null || true`);
+  }
+
+  const rules = scopedRules ?? [];
+  currentRules = rules;
+  currentBypassHosts = bypassHosts ?? DEFAULT_BYPASS_HOSTS;
+
+  const bypassHostsEnv = `-e PROXY_BYPASS_HOSTS=${currentBypassHosts.join(",")}`;
+
+  let policyEnv = bypassHostsEnv;
+  if (rules.length > 0) {
+    const policy = { scopedAllowRules: rules };
+    policyEnv += ` -e PROXY_POLICY=${JSON.stringify(JSON.stringify(policy))}`;
+  }
+
+  const { ok, stderr } = await runShell(
+    `podman run -d \
+      --name ${PROXY_CONTAINER_NAME} \
+      --user 0:0 \
+      --network slirp4netns \
+      --cap-drop ALL \
+      --security-opt no-new-privileges \
+      --security-opt seccomp="${SECCOMP_PROFILE}" \
+      --read-only \
+      --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+      --memory 512m \
+      --pids-limit 128 \
+      --cpus 1 \
+      -p ${PROXY_PORT}:${PROXY_PORT} \
+      ${policyEnv} \
+      ${IMAGE}`,
+  );
+
+  if (!ok) {
+    throw new Error(`Failed to start proxy container: ${stderr}`);
+  }
+}
+
+export async function stopProxy(): Promise<void> {
+  await runShell(`podman stop ${PROXY_CONTAINER_NAME} 2>/dev/null || true`);
+  await runShell(`podman rm -f ${PROXY_CONTAINER_NAME} 2>/dev/null || true`);
+  currentRules = [];
+  currentBypassHosts = DEFAULT_BYPASS_HOSTS;
+}
+
+export async function ensureProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: string[]): Promise<void> {
+  const needed = scopedRules ?? [];
+  const hosts = bypassHosts ?? DEFAULT_BYPASS_HOSTS;
+  const running = await isProxyRunning();
+
+  if (running) {
+    const missingRules = needed.filter(
+      (n) => !currentRules.some((c) => c.host === n.host && c.pathPrefix === n.pathPrefix),
+    );
+    const missingHosts = hosts.filter((h) => !currentBypassHosts.includes(h));
+    if (missingRules.length === 0 && missingHosts.length === 0) return;
+
+    // Restart with merged rules + hosts
+    await stopProxy();
+    const mergedRules = [...currentRules, ...missingRules];
+    const mergedHosts = [...new Set([...currentBypassHosts, ...missingHosts])];
+    await startProxy(mergedRules, mergedHosts);
+  } else {
+    await startProxy(needed, hosts);
+  }
+}
+

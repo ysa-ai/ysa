@@ -1,0 +1,126 @@
+# Pin base image by digest to prevent supply chain attacks
+# To update: fetch the manifest list digest (works on all platforms):
+#   curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:oven/bun:pull" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" | xargs -I{} curl -sI -H "Authorization: Bearer {}" -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" "https://registry-1.docker.io/v2/oven/bun/manifests/1.2-alpine" | grep docker-content-digest
+FROM docker.io/oven/bun:1.2-alpine@sha256:0841c588f6304300baf1d395ae339ce09a6e18c4b6a7cdd4fddcbdb87a2f096a
+
+# Install minimal tools needed by Claude CLI and git operations
+# openssl for CA cert generation, iptables for OCI hook network enforcement
+# ca-certificates for trust store updates
+RUN apk add --no-cache git bash curl jq nodejs npm openssl iptables ip6tables ca-certificates && \
+    rm -rf /var/cache/apk/* /tmp/*
+
+# Install Claude CLI globally (hermetic — no host dependency)
+RUN npm install -g @anthropic-ai/claude-code && \
+    rm -rf /root/.npm /tmp/*
+
+# Create non-root user
+RUN deluser bun 2>/dev/null || true && \
+    addgroup -g 1001 agent && adduser -u 1000 -G agent -D -h /home/agent agent
+
+# Workspace (rw — Claude edits code here) and output dirs
+RUN mkdir -p /workspace /output && chown agent:agent /workspace /output
+
+# Git branch restriction hook — blocks push to any branch except the allowed one
+# ALLOWED_BRANCH env var is set at container runtime
+COPY git-push-guard.sh /usr/local/bin/git-push-guard.sh
+RUN chmod +x /usr/local/bin/git-push-guard.sh
+
+# Git safe wrapper — strips dangerous filter configs before each git command
+# Installed at /usr/local/bin/git to shadow /usr/bin/git
+COPY git-safe-wrapper.sh /usr/local/bin/git
+RUN chmod +x /usr/local/bin/git
+
+# Harden git against config-based code execution attacks
+# core.hooksPath → our controlled dir (contains ONLY our pre-push guard)
+# This prevents malicious repo hooks from executing
+RUN mkdir -p /usr/local/share/git-hooks && \
+    cp /usr/local/bin/git-push-guard.sh /usr/local/share/git-hooks/pre-push && \
+    chmod +x /usr/local/share/git-hooks/pre-push
+
+RUN git config --system core.hooksPath /usr/local/share/git-hooks && \
+    git config --system core.fsmonitor false && \
+    git config --system core.symlinks false && \
+    git config --system receive.fsckObjects true && \
+    git config --system transfer.fsckObjects true && \
+    git config --system safe.directory /workspace && \
+    git config --system protocol.file.allow never && \
+    git config --system submodule.recurse false
+
+# Remove setuid/setgid bits from ALL binaries (defense in depth)
+RUN find / -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true
+
+# Remove unnecessary system utilities that could aid exploitation
+# Also remove busybox symlinks for tools we don't need (wget, nc, etc.)
+RUN rm -f /usr/bin/passwd /usr/bin/chage /usr/bin/chfn /usr/bin/chsh \
+         /usr/bin/expiry /usr/bin/gpasswd /usr/bin/newgrp \
+         /sbin/unix_chkpwd \
+         /usr/bin/wget /usr/bin/nc /usr/bin/netcat \
+         2>/dev/null || true
+
+# Claude hooks and settings (security guard for in-container tool use)
+# Installed in /home/agent/.claude for direct use (e.g. attack-test.sh)
+# AND in /etc/claude-defaults for volume-mount initialization (see sandbox-run.sh)
+RUN mkdir -p /home/agent/.claude/hooks && chown -R agent:agent /home/agent/.claude
+COPY container-sandbox-guard.sh /home/agent/.claude/hooks/sandbox-guard.sh
+COPY claude-settings.json /home/agent/.claude/settings.json
+RUN chmod +x /home/agent/.claude/hooks/sandbox-guard.sh && \
+    chown -R agent:agent /home/agent/.claude
+RUN mkdir -p /etc/claude-defaults/hooks && \
+    cp /home/agent/.claude/settings.json /etc/claude-defaults/settings.json && \
+    cp /home/agent/.claude/hooks/sandbox-guard.sh /etc/claude-defaults/hooks/sandbox-guard.sh && \
+    chmod +x /etc/claude-defaults/hooks/sandbox-guard.sh
+
+# Network proxy — install shared CA cert so the agent trusts the MITM proxy
+COPY ca.pem /usr/local/share/ca-certificates/ysa-proxy-ca.crt
+RUN update-ca-certificates
+
+# OCI hook script for iptables network enforcement (installed on host, copied here for reference)
+COPY oci-network-hook.sh /opt/proxy/oci-network-hook.sh
+RUN chmod +x /opt/proxy/oci-network-hook.sh
+
+USER agent
+
+# Lock down git against local config code execution attacks
+# GIT_CONFIG_COUNT/KEY/VALUE env vars override local .git/config
+# These take highest precedence (after -c flags) and cannot be overridden
+# by local config. The wrapper strips wildcard patterns; these handle exact keys.
+# Ref: https://git-scm.com/docs/git-config#ENVIRONMENT
+ENV GIT_CONFIG_COUNT=17 \
+    GIT_CONFIG_KEY_0=core.fsmonitor \
+    GIT_CONFIG_VALUE_0=false \
+    GIT_CONFIG_KEY_1=core.hooksPath \
+    GIT_CONFIG_VALUE_1=/usr/local/share/git-hooks \
+    GIT_CONFIG_KEY_2=filter.lfs.process \
+    GIT_CONFIG_VALUE_2= \
+    GIT_CONFIG_KEY_3=filter.lfs.clean \
+    GIT_CONFIG_VALUE_3= \
+    GIT_CONFIG_KEY_4=credential.helper \
+    GIT_CONFIG_VALUE_4= \
+    GIT_CONFIG_KEY_5=core.symlinks \
+    GIT_CONFIG_VALUE_5=false \
+    GIT_CONFIG_KEY_6=protocol.file.allow \
+    GIT_CONFIG_VALUE_6=never \
+    GIT_CONFIG_KEY_7=submodule.recurse \
+    GIT_CONFIG_VALUE_7=false \
+    GIT_CONFIG_KEY_8=core.pager \
+    GIT_CONFIG_VALUE_8=cat \
+    GIT_CONFIG_KEY_9=core.editor \
+    GIT_CONFIG_VALUE_9=true \
+    GIT_CONFIG_KEY_10=core.sshCommand \
+    GIT_CONFIG_VALUE_10= \
+    GIT_CONFIG_KEY_11=core.askPass \
+    GIT_CONFIG_VALUE_11= \
+    GIT_CONFIG_KEY_12=core.gitProxy \
+    GIT_CONFIG_VALUE_12= \
+    GIT_CONFIG_KEY_13=diff.external \
+    GIT_CONFIG_VALUE_13= \
+    GIT_CONFIG_KEY_14=gpg.program \
+    GIT_CONFIG_VALUE_14= \
+    GIT_CONFIG_KEY_15=sequence.editor \
+    GIT_CONFIG_VALUE_15=true \
+    GIT_CONFIG_KEY_16=protocol.ext.allow \
+    GIT_CONFIG_VALUE_16=never
+
+WORKDIR /workspace
+
+ENTRYPOINT ["/bin/bash"]

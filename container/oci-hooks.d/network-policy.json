@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0",
+  "hook": {
+    "path": "/opt/proxy/oci-network-hook.sh"
+  },
+  "when": {
+    "annotations": {
+      "network_policy": "strict|custom"
+    }
+  },
+  "stages": ["createRuntime"]
+}

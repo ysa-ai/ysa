@@ -1,0 +1,309 @@
+#!/bin/bash
+# sandbox-run.sh — Launch a hardened sandbox container for an AI agent session
+#
+# Usage: sandbox-run.sh <worktree> <repo_git_dir> <branch> <mode> <task_id> [command...]
+#
+# Modes: readonly, readwrite
+#
+# Mounts: worktree (/workspace), git dir (/repo.git) — nothing else.
+# Session persistence via podman named volume (task-session-{task_id}).
+# Log capture via stdout pipe on host (tee).
+#
+# Required env vars:
+#   CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY — auth for Claude CLI
+# Optional env vars:
+#   SANDBOX_TIMEOUT    — container timeout in seconds (default: 3600)
+#   LOG_FILE           — host path for output log (captured via tee)
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE="${AGENT_IMAGE:-sandbox-claude}"
+SECCOMP_PROFILE="$SCRIPT_DIR/seccomp.json"
+TIMEOUT="${SANDBOX_TIMEOUT:-3600}"  # default 1 hour
+
+# ── Args ──────────────────────────────────────────────────────────────
+if [ $# -lt 5 ]; then
+  echo "Usage: $0 <worktree> <repo_git_dir> <branch> <mode> <task_id> [command...]"
+  echo "Modes: readonly, readwrite"
+  exit 1
+fi
+
+WORKTREE="$1"
+REPO_GIT="$2"
+ALLOWED_BRANCH="$3"
+MODE="$4"
+TASK_ID="$5"
+shift 5
+# Extract --allowedTools value (used to write MCP permissions into container settings)
+ALLOWED_TOOLS_VALUE=""
+PREV_ARG=""
+for arg in "$@"; do
+  if [ "$PREV_ARG" = "--allowedTools" ]; then
+    ALLOWED_TOOLS_VALUE="$arg"
+    break
+  fi
+  PREV_ARG="$arg"
+done
+
+# Build properly shell-quoted args string (handles parens in --allowedTools values)
+QUOTED_ARGS=""
+for arg in "$@"; do
+  printf -v escaped '%q' "$arg"
+  QUOTED_ARGS+=" $escaped"
+done
+
+# ── Validate ──────────────────────────────────────────────────────────
+if [ ! -d "$WORKTREE" ]; then
+  echo "ERROR: Worktree not found: $WORKTREE" >&2; exit 1
+fi
+if [ ! -d "$REPO_GIT" ]; then
+  echo "ERROR: Git dir not found: $REPO_GIT" >&2; exit 1
+fi
+if [ ! -f "$SECCOMP_PROFILE" ]; then
+  echo "ERROR: Seccomp profile not found: $SECCOMP_PROFILE" >&2; exit 1
+fi
+
+WORKTREE_NAME="$(basename "$WORKTREE")"
+
+# ── Mode-based access control ────────────────────────────────────────
+case "$MODE" in
+  readonly)
+    REPO_MOUNT="$REPO_GIT:/repo.git:ro"
+    SANDBOX_MODE="readonly"
+    ;;
+  readwrite)
+    REPO_MOUNT="$REPO_GIT:/repo.git:rw"
+    SANDBOX_MODE="readwrite"
+    ;;
+  *)
+    echo "ERROR: Unknown mode '$MODE'. Use: readonly, readwrite" >&2
+    exit 1
+    ;;
+esac
+
+# ── Session volume ────────────────────────────────────────────────────
+SESSION_VOLUME="task-session-${TASK_ID}"
+podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
+
+# ── Git worktree pointer ──────────────────────────────────────────────
+# Write container-internal git pointers from the host before container starts,
+# so the container sees the correct paths without needing write access to them.
+echo "gitdir: /repo.git/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
+echo "/workspace/.git" > "$REPO_GIT/worktrees/$WORKTREE_NAME/gitdir"
+
+# ── Network policy ───────────────────────────────────────────────────
+NETWORK_POLICY="${NETWORK_POLICY:-none}"
+NETWORK_FLAGS=""
+PROXY_ENV_FLAGS=""
+
+if [ "$NETWORK_POLICY" = "strict" ] || [ "$NETWORK_POLICY" = "custom" ]; then
+  NETWORK_FLAGS="--annotation network_policy=$NETWORK_POLICY"
+  PROXY_URL="http://${TASK_ID}:x@host.containers.internal:3128"
+  PROXY_ENV_FLAGS="-e HTTP_PROXY=$PROXY_URL -e HTTPS_PROXY=$PROXY_URL -e http_proxy=$PROXY_URL -e https_proxy=$PROXY_URL"
+  if [ -n "${NO_PROXY:-}" ]; then
+    PROXY_ENV_FLAGS="$PROXY_ENV_FLAGS -e NO_PROXY=$NO_PROXY -e no_proxy=$NO_PROXY"
+  fi
+fi
+
+# ── Audit log (to stderr, captured by caller) ─────────────────────────
+echo "=== Sandbox Audit Log ===" >&2
+echo "Mode: $SANDBOX_MODE" >&2
+echo "Task: $TASK_ID" >&2
+echo "Branch: $ALLOWED_BRANCH" >&2
+echo "Worktree: $WORKTREE" >&2
+echo "Network: $NETWORK_POLICY" >&2
+echo "Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+echo "Timeout: ${TIMEOUT}s" >&2
+echo "Args:$QUOTED_ARGS" >&2
+echo "OAuth: ${CLAUDE_CODE_OAUTH_TOKEN:+set}" >&2
+echo "API Key: ${ANTHROPIC_API_KEY:+set}" >&2
+echo "=========================" >&2
+
+# ── Runtime version checks ────────────────────────────────────────────
+podman_ver=$(podman version --format '{{.Client.Version}}' 2>/dev/null || echo "unknown")
+runtime_ver=$(podman info --format '{{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Version}}' 2>/dev/null | head -1 || echo "unknown")
+echo "Podman: $podman_ver, Runtime: $runtime_ver" >&2
+
+# ── Progress helper ──────────────────────────────────────────────────
+progress() {
+  if [ -n "${LOG_FILE:-}" ]; then
+    printf '{\"type\":\"system\",\"subtype\":\"progress\",\"message\":\"%s\"}\n' "$1" >> "$LOG_FILE"
+  fi
+}
+
+# ── Log capture setup ─────────────────────────────────────────────────
+if [ -n "${LOG_FILE:-}" ]; then
+  TEE_CMD="tee -a $LOG_FILE"
+else
+  TEE_CMD="cat"
+fi
+
+# ── Log monitor (background — watches for max_turns / result) ────────
+MONITOR_PID=""
+cleanup_monitor() {
+  if [ -n "$MONITOR_PID" ]; then
+    kill "$MONITOR_PID" 2>/dev/null || true
+    wait "$MONITOR_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_monitor EXIT
+
+if [ -n "${LOG_FILE:-}" ]; then
+  # Record existing line count so continue/refine sessions don't re-trigger
+  # on "result" events from previous runs in the same log file.
+  INITIAL_LINES=0
+  if [ -f "$LOG_FILE" ]; then
+    INITIAL_LINES=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
+  fi
+  # Configurable log patterns — override via env to support different providers
+  MAX_TURNS_PATTERN="${MAX_TURNS_GREP_PATTERN:-error_max_turns}"
+  if [ -n "${RESULT_GREP_PATTERN:-}" ]; then
+    RESULT_PATTERN="$RESULT_GREP_PATTERN"
+  else
+    RESULT_PATTERN='"type":"result"'
+  fi
+  (
+    while true; do
+      NEW_CONTENT=$(tail -n +$((INITIAL_LINES + 1)) "$LOG_FILE" 2>/dev/null || true)
+      if echo "$NEW_CONTENT" | grep -q "$MAX_TURNS_PATTERN" 2>/dev/null; then
+        sleep 2
+        podman stop "sandbox-${TASK_ID}" >/dev/null 2>&1 || true
+        break
+      fi
+      # Stop container once the agent outputs a result — the CLI may do
+      # post-session telemetry that can hang behind the proxy.
+      if echo "$NEW_CONTENT" | grep -q "$RESULT_PATTERN" 2>/dev/null; then
+        sleep 3
+        podman stop "sandbox-${TASK_ID}" >/dev/null 2>&1 || true
+        break
+      fi
+      sleep 1
+    done
+  ) &
+  MONITOR_PID=$!
+fi
+
+# ── Auth env vars for container ───────────────────────────────────────
+# AGENT_AUTH_ENV_FLAGS is pre-built by the caller (e.g. "-e ANTHROPIC_API_KEY")
+# Fall back to Claude defaults if not set (backward compat).
+if [ -n "${AGENT_AUTH_ENV_FLAGS+x}" ]; then
+  AUTH_ENV_FLAGS="${AGENT_AUTH_ENV_FLAGS}"
+else
+  AUTH_ENV_FLAGS=""
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    AUTH_ENV_FLAGS="-e ANTHROPIC_API_KEY"
+  fi
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    AUTH_ENV_FLAGS="$AUTH_ENV_FLAGS -e CLAUDE_CODE_OAUTH_TOKEN"
+  fi
+fi
+
+progress "Starting container (network: $NETWORK_POLICY)..."
+
+# ── Launch container ──────────────────────────────────────────────────
+podman run --rm \
+  --name "sandbox-${TASK_ID}" \
+  --label "task=${TASK_ID}" \
+  --userns=keep-id \
+  --network slirp4netns \
+  --add-host host.containers.internal:host-gateway \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --security-opt seccomp="$SECCOMP_PROFILE" \
+  --security-opt mask=/proc/kcore \
+  --security-opt mask=/proc/kallsyms \
+  --security-opt mask=/proc/timer_list \
+  --security-opt mask=/proc/sched_debug \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=256m \
+  --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \
+  --memory 4g \
+  --pids-limit 512 \
+  --cpus 2 \
+  --ulimit core=0 \
+  --timeout "$TIMEOUT" \
+  -e ALLOWED_BRANCH="$ALLOWED_BRANCH" \
+  -e AGENT_BINARY="${AGENT_BINARY:-claude}" \
+  -e AGENT_INIT_SCRIPT \
+  -e AGENT_PROMPT_FLAG="${AGENT_PROMPT_FLAG:--p}" \
+  $AUTH_ENV_FLAGS \
+  $PROXY_ENV_FLAGS \
+  $NETWORK_FLAGS \
+  -e PROMPT_URL="${PROMPT_URL:-}" \
+  ${EXTRA_POD_ENV:-} \
+  -e ALLOWED_TOOLS="$ALLOWED_TOOLS_VALUE" \
+  -e ENABLE_TOOL_SEARCH=false \
+  -e GIT_AUTHOR_NAME="Sandbox Agent" \
+  -e GIT_AUTHOR_EMAIL="agent@sandbox" \
+  -e GIT_COMMITTER_NAME="Sandbox Agent" \
+  -e GIT_COMMITTER_EMAIL="agent@sandbox" \
+  -v "$WORKTREE:/workspace:rw" \
+  -v "$REPO_MOUNT" \
+  --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent" \
+  "$IMAGE" \
+  -c "
+    # Progress helper (JSON to stdout → tee → LOG_FILE)
+    _progress() { printf '{\"type\":\"system\",\"subtype\":\"progress\",\"message\":\"%s\"}\n' \"\$1\"; }
+
+    # Provider-specific init (settings files, config, onboarding bypass, etc.)
+    # AGENT_INIT_SCRIPT is set by the caller; falls back to Claude defaults if unset.
+    if [ -n \"\${AGENT_INIT_SCRIPT:-}\" ]; then
+      eval \"\$AGENT_INIT_SCRIPT\"
+    else
+      if [ ! -f /home/agent/.claude/settings.json ] && [ -f /etc/claude-defaults/settings.json ]; then
+        mkdir -p /home/agent/.claude/hooks
+        cp /etc/claude-defaults/settings.json /home/agent/.claude/settings.json
+        cp /etc/claude-defaults/hooks/sandbox-guard.sh /home/agent/.claude/hooks/sandbox-guard.sh 2>/dev/null
+        chmod +x /home/agent/.claude/hooks/sandbox-guard.sh 2>/dev/null
+      fi
+      if [ -n \"\${ALLOWED_TOOLS:-}\" ] && [ -f /home/agent/.claude/settings.json ]; then
+        TOOLS_JSON=\$(echo \"\$ALLOWED_TOOLS\" | tr ',' '\\n' | jq -R . | jq -s . 2>/dev/null || echo '[]')
+        if [ \"\$TOOLS_JSON\" != '[]' ]; then
+          jq --argjson t \"\$TOOLS_JSON\" '.permissions.allow = \$t' /home/agent/.claude/settings.json > /tmp/s.json 2>/dev/null && mv /tmp/s.json /home/agent/.claude/settings.json
+        fi
+      fi
+      if [ -f /home/agent/.claude.json ]; then
+        jq '.hasCompletedOnboarding = true | .projects[\"/workspace\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
+      else
+        echo '{\"hasCompletedOnboarding\":true,\"projects\":{\"/workspace\":{\"hasTrustDialogAccepted\":true}}}' > /home/agent/.claude.json
+      fi
+    fi
+
+    AGENT_BIN=\"\${AGENT_BINARY:-claude}\"
+
+    # Prompt handling: --resume or -p means args are self-contained, otherwise fetch from PROMPT_URL
+    case \"$QUOTED_ARGS\" in
+      *--resume*|*-p\ *)
+        _progress 'Starting agent...'
+        \$AGENT_BIN $QUOTED_ARGS
+        ;;
+      *)
+        if [ -n \"\$PROMPT_URL\" ]; then
+          _progress 'Fetching prompt...'
+          PROMPT=\$(curl -sf \"\$PROMPT_URL\")
+          if [ -z \"\$PROMPT\" ]; then
+            echo 'ERROR: Failed to fetch prompt from PROMPT_URL' >&2
+            exit 1
+          fi
+          _progress 'Starting agent...'
+          \$AGENT_BIN \${AGENT_PROMPT_FLAG:--p} \"\$PROMPT\" $QUOTED_ARGS
+        else
+          echo 'ERROR: No prompt provided (use -p arg or set PROMPT_URL)' >&2
+          exit 1
+        fi
+        ;;
+    esac
+  " 2>&1 | $TEE_CMD > /dev/null
+
+EXIT_CODE=${PIPESTATUS[0]}
+
+echo "" >&2
+echo "Finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+echo "Exit code: $EXIT_CODE" >&2
+
+# ── Restore host worktree pointer ─────────────────────────────────────
+echo "gitdir: $REPO_GIT/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
+echo "$WORKTREE/.git" > "$REPO_GIT/worktrees/$WORKTREE_NAME/gitdir"
+
+exit $EXIT_CODE
