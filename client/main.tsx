@@ -15,20 +15,35 @@ const queryClient = new QueryClient({
   },
 });
 
-const trpcClient = trpc.createClient({
-  links: [
-    httpBatchLink({
-      url: "/trpc",
-    }),
-  ],
-});
+async function init() {
+  let token: string | undefined = window.__YSA_TOKEN__;
+  if (!token) {
+    try {
+      const res = await fetch("/api/token");
+      if (res.ok) token = await res.text();
+    } catch {}
+  }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <trpc.Provider client={trpcClient} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>
-        <App />
-      </QueryClientProvider>
-    </trpc.Provider>
-  </StrictMode>,
-);
+  const trpcClient = trpc.createClient({
+    links: [
+      httpBatchLink({
+        url: "/trpc",
+        headers() {
+          return token ? { Authorization: `Bearer ${token}` } : {};
+        },
+      }),
+    ],
+  });
+
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <trpc.Provider client={trpcClient} queryClient={queryClient}>
+        <QueryClientProvider client={queryClient}>
+          <App />
+        </QueryClientProvider>
+      </trpc.Provider>
+    </StrictMode>,
+  );
+}
+
+init();

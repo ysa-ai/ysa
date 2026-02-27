@@ -10,12 +10,13 @@ export type AppConfig = {
   port: number | null;
   anthropic_api_key: string | null;
   mistral_api_key: string | null;
+  auth_token: string | null;
 };
 
 export function getConfig(): AppConfig {
   const db = getDb();
   const row = db.select().from(schema.config).where(eq(schema.config.id, 1)).get();
-  return row ?? { project_root: null, default_model: null, default_network_policy: "none", preferred_terminal: null, port: null, anthropic_api_key: null, mistral_api_key: null };
+  return row ?? { project_root: null, default_model: null, default_network_policy: "none", preferred_terminal: null, port: null, anthropic_api_key: null, mistral_api_key: null, auth_token: null };
 }
 
 export function setConfig(updates: Partial<AppConfig>) {
@@ -26,6 +27,16 @@ export function setConfig(updates: Partial<AppConfig>) {
   } else {
     db.insert(schema.config).values({ id: 1, ...updates }).run();
   }
+}
+
+export function getOrCreateAuthToken(): string {
+  const config = getConfig();
+  if (config.auth_token) {
+    return config.auth_token;
+  }
+  const token = crypto.randomUUID();
+  setConfig({ auth_token: token });
+  return token;
 }
 
 export function getServerConfig() {

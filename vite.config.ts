@@ -9,6 +9,7 @@ export default defineConfig({
     host: true,
     proxy: {
       "/trpc": "http://localhost:4000",
+      "/api/token": "http://localhost:4000",
     },
   },
   build: {

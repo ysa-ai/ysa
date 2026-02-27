@@ -38,4 +38,5 @@ export const config = sqliteTable("config", {
   port: integer("port"),
   anthropic_api_key: text("anthropic_api_key"),
   mistral_api_key: text("mistral_api_key"),
+  auth_token: text("auth_token"),
 });
