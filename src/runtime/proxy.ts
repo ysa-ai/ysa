@@ -12,10 +12,6 @@ export interface ScopedAllowRule {
 
 const DEFAULT_BYPASS_HOSTS = ["api.anthropic.com", "statsig.anthropic.com"];
 
-// Track current state so we know if proxy needs restart
-let currentRules: ScopedAllowRule[] = [];
-let currentBypassHosts: string[] = DEFAULT_BYPASS_HOSTS;
-
 async function runShell(cmd: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   const proc = Bun.spawn(["bash", "-c", cmd], { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr] = await Promise.all([
@@ -24,6 +20,30 @@ async function runShell(cmd: string): Promise<{ ok: boolean; stdout: string; std
   ]);
   const exitCode = await proc.exited;
   return { ok: exitCode === 0, stdout: stdout.trim(), stderr: stderr.trim() };
+}
+
+async function getContainerState(): Promise<{ rules: ScopedAllowRule[]; bypassHosts: string[] }> {
+  const { ok, stdout } = await runShell(
+    `podman inspect ${PROXY_CONTAINER_NAME} --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null`,
+  );
+  if (!ok || !stdout) return { rules: [], bypassHosts: [...DEFAULT_BYPASS_HOSTS] };
+
+  let rules: ScopedAllowRule[] = [];
+  let bypassHosts: string[] = [...DEFAULT_BYPASS_HOSTS];
+
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("PROXY_POLICY=")) {
+      try {
+        const parsed = JSON.parse(line.slice("PROXY_POLICY=".length));
+        rules = parsed.scopedAllowRules ?? [];
+      } catch {}
+    }
+    if (line.startsWith("PROXY_BYPASS_HOSTS=")) {
+      bypassHosts = line.slice("PROXY_BYPASS_HOSTS=".length).split(",").filter(Boolean);
+    }
+  }
+
+  return { rules, bypassHosts };
 }
 
 export async function isProxyRunning(): Promise<boolean> {
@@ -47,10 +67,8 @@ export async function startProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: 
   }
 
   const rules = scopedRules ?? [];
-  currentRules = rules;
-  currentBypassHosts = bypassHosts ?? DEFAULT_BYPASS_HOSTS;
-
-  const bypassHostsEnv = `-e PROXY_BYPASS_HOSTS=${currentBypassHosts.join(",")}`;
+  const hosts = bypassHosts ?? DEFAULT_BYPASS_HOSTS;
+  const bypassHostsEnv = `-e PROXY_BYPASS_HOSTS=${hosts.join(",")}`;
 
   let policyEnv = bypassHostsEnv;
   if (rules.length > 0) {
@@ -84,8 +102,6 @@ export async function startProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: 
 export async function stopProxy(): Promise<void> {
   await runShell(`podman stop ${PROXY_CONTAINER_NAME} 2>/dev/null || true`);
   await runShell(`podman rm -f ${PROXY_CONTAINER_NAME} 2>/dev/null || true`);
-  currentRules = [];
-  currentBypassHosts = DEFAULT_BYPASS_HOSTS;
 }
 
 export async function ensureProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: string[]): Promise<void> {
@@ -94,19 +110,19 @@ export async function ensureProxy(scopedRules?: ScopedAllowRule[], bypassHosts?:
   const running = await isProxyRunning();
 
   if (running) {
+    const { rules: containerRules, bypassHosts: containerHosts } = await getContainerState();
+
     const missingRules = needed.filter(
-      (n) => !currentRules.some((c) => c.host === n.host && c.pathPrefix === n.pathPrefix),
+      (n) => !containerRules.some((c) => c.host === n.host && c.pathPrefix === n.pathPrefix),
     );
-    const missingHosts = hosts.filter((h) => !currentBypassHosts.includes(h));
+    const missingHosts = hosts.filter((h) => !containerHosts.includes(h));
     if (missingRules.length === 0 && missingHosts.length === 0) return;
 
-    // Restart with merged rules + hosts
     await stopProxy();
-    const mergedRules = [...currentRules, ...missingRules];
-    const mergedHosts = [...new Set([...currentBypassHosts, ...missingHosts])];
+    const mergedRules = [...containerRules, ...missingRules];
+    const mergedHosts = [...new Set([...containerHosts, ...missingHosts])];
     await startProxy(mergedRules, mergedHosts);
   } else {
     await startProxy(needed, hosts);
   }
 }
-
