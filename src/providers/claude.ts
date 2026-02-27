@@ -112,6 +112,11 @@ async function refreshOAuthToken(refreshToken: string, clientId: string): Promis
 
   if (!res.ok) {
     const body = await res.text();
+    let parsed: any;
+    try { parsed = JSON.parse(body); } catch { parsed = null; }
+    if (parsed?.error === "invalid_grant") {
+      throw new Error("invalid_grant");
+    }
     throw new Error(`OAuth refresh failed (${res.status}): ${body}`);
   }
 
@@ -152,7 +157,28 @@ async function getOAuthToken(): Promise<string> {
       throw new Error("OAuth token expired and could not be refreshed. Run 'claude /login' to re-authenticate, or set the CLAUDE_CODE_OAUTH_CLIENT_ID env var.");
     }
     console.log("[oauth] Access token expired or expiring soon, refreshing...");
-    const refreshed = await refreshOAuthToken(oauth.refreshToken, clientId);
+    let refreshed: Awaited<ReturnType<typeof refreshOAuthToken>>;
+    try {
+      refreshed = await refreshOAuthToken(oauth.refreshToken, clientId);
+    } catch (err: any) {
+      if (err.message === "invalid_grant") {
+        // Refresh token was rotated by Claude CLI — re-read Keychain and retry once
+        const freshCreds = await readCredentials();
+        const freshOAuth = freshCreds.claudeAiOauth;
+        if (freshOAuth?.refreshToken && freshOAuth.refreshToken !== oauth.refreshToken) {
+          console.log("[oauth] Refresh token rotated by Claude CLI, retrying with fresh token...");
+          refreshed = await refreshOAuthToken(freshOAuth.refreshToken, clientId);
+          Object.assign(creds, freshCreds);
+          Object.assign(oauth, freshOAuth);
+        } else {
+          cachedOAuthToken = null;
+          cachedTokenExpiresAt = 0;
+          throw new Error("Claude session expired. Run 'claude /login' to re-authenticate.");
+        }
+      } else {
+        throw err;
+      }
+    }
 
     creds.claudeAiOauth = {
       ...oauth,
