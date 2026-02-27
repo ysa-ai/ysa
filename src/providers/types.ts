@@ -3,6 +3,8 @@ export interface ParsedLogEntry {
   icon?: string;
   text: string;
   tool?: string;
+  tool_use_id?: string;
+  output?: string;
   session_id?: string;
   cost?: number;
   turns?: number;

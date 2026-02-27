@@ -9,6 +9,7 @@ interface LogEntry {
   icon?: string;
   text: string;
   tool?: string;
+  output?: string;
   ts?: number;
 }
 
@@ -376,8 +377,8 @@ function LogRow({ entry, index, expanded, onToggle, isLast, progressActive }: { 
         </button>
         {expanded && (
           <div className="mx-3 mb-1.5 bg-bg-inset border border-border-subtle rounded overflow-hidden">
-            <pre className="text-[11px] font-mono text-text-muted whitespace-pre-wrap break-all leading-relaxed p-2.5 max-h-32 overflow-y-auto">
-              {entry.text}
+            <pre className="text-[11px] font-mono text-text-muted whitespace-pre-wrap break-all leading-relaxed p-2.5 max-h-64 overflow-y-auto">
+              {entry.output ?? entry.text}
             </pre>
           </div>
         )}
