@@ -53,6 +53,44 @@ Implement `ProviderAdapter` from `src/providers/types.ts`, register in `src/prov
 
 Add a SQL file in `src/db/migrations/` and update `meta/_journal.json`. Never modify existing migration files.
 
+## Git workflow
+
+- **Never push directly to `main`** except for trivial doc/typo fixes
+- All changes go through a PR — even solo work
+- `main` is always releasable
+
+### PR naming convention
+
+```
+<type>: <short description>
+```
+
+| Type | When to use |
+|---|---|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `chore` | Tooling, deps, config, CI |
+| `refactor` | Code change with no behavior change |
+| `docs` | Documentation only |
+| `test` | Tests only |
+| `perf` | Performance improvement |
+
+Examples: `feat: add Mistral provider`, `fix: worktree cleanup on crash`, `chore: bump bun to 1.2.5`
+
+### Versioning & releases
+
+Releases are **git tags** on `main`, no long-lived version branches. Version branches only if backporting fixes to an old major.
+
+Release flow:
+```bash
+npm version patch   # or minor / major — bumps package.json + creates git tag
+git push --follow-tags
+npm publish
+gh release create v<x.y.z> --generate-notes
+```
+
+Use `gh release create --generate-notes` to auto-generate release notes from merged PR titles — this is why PR titles matter.
+
 ## Rules
 
 - No over-engineering — keep it simple
