@@ -1,10 +1,20 @@
 {
   "name": "@ysa-ai/ysa",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Run AI coding agents (Claude, Mistral, other providers coming soon) in parallel inside hardened, isolated containers with git worktree separation.",
   "license": "Elastic-2.0",
-  "keywords": ["ai", "agent", "sandbox", "container", "security", "podman", "claude", "parallel", "worktree"],
+  "keywords": [
+    "ai",
+    "agent",
+    "sandbox",
+    "container",
+    "security",
+    "podman",
+    "claude",
+    "parallel",
+    "worktree"
+  ],
   "homepage": "https://github.com/ysa-ai/ysa",
   "repository": {
     "type": "git",
