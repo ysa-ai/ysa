@@ -38,7 +38,15 @@ interface StrictPolicy {
 }
 
 // Non-provider-specific bypass hosts always allowed through the proxy
-const BASE_BYPASS_HOSTS = ["host.containers.internal", "http-intake.logs.us5.datadoghq.com", "registry.npmjs.org"];
+const BASE_BYPASS_HOSTS = [
+  "host.containers.internal",
+  "http-intake.logs.us5.datadoghq.com",
+  "registry.npmjs.org",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "crates.io",
+  "static.crates.io",
+];
 
 // Provider-specific bypass hosts come from PROXY_BYPASS_HOSTS env var (comma-separated)
 // e.g. "api.anthropic.com,statsig.anthropic.com" for Claude
