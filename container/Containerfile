@@ -1,7 +1,7 @@
 # Pin base image by digest to prevent supply chain attacks
 # To update: fetch the manifest list digest (works on all platforms):
-#   curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:oven/bun:pull" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" | xargs -I{} curl -sI -H "Authorization: Bearer {}" -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" "https://registry-1.docker.io/v2/oven/bun/manifests/1.2-alpine" | grep docker-content-digest
-FROM docker.io/oven/bun:1.2-alpine@sha256:0841c588f6304300baf1d395ae339ce09a6e18c4b6a7cdd4fddcbdb87a2f096a
+#   curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:oven/bun:pull" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" | xargs -I{} curl -sI -H "Authorization: Bearer {}" -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" "https://registry-1.docker.io/v2/oven/bun/manifests/1.3-alpine" | grep docker-content-digest
+FROM docker.io/oven/bun:1.3-alpine@sha256:32f1fcccb1523960b254c4f80973bee1a910d60be000a45c20c9129a1efcffee
 
 # Install minimal tools needed by Claude CLI and git operations
 # openssl for CA cert generation, iptables for OCI hook network enforcement

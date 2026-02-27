@@ -100,7 +100,7 @@ PROXY_ENV_FLAGS=""
 if [ "$NETWORK_POLICY" = "strict" ] || [ "$NETWORK_POLICY" = "custom" ]; then
   NETWORK_FLAGS="--annotation network_policy=$NETWORK_POLICY"
   PROXY_URL="http://${TASK_ID}:x@host.containers.internal:3128"
-  PROXY_ENV_FLAGS="-e HTTP_PROXY=$PROXY_URL -e HTTPS_PROXY=$PROXY_URL -e http_proxy=$PROXY_URL -e https_proxy=$PROXY_URL"
+  PROXY_ENV_FLAGS="-e HTTP_PROXY=$PROXY_URL -e HTTPS_PROXY=$PROXY_URL -e http_proxy=$PROXY_URL -e https_proxy=$PROXY_URL -e NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/ysa-proxy-ca.crt -e NODE_USE_ENV_PROXY=1"
   if [ -n "${NO_PROXY:-}" ]; then
     PROXY_ENV_FLAGS="$PROXY_ENV_FLAGS -e NO_PROXY=$NO_PROXY -e no_proxy=$NO_PROXY"
   fi
@@ -157,11 +157,11 @@ if [ -n "${LOG_FILE:-}" ]; then
     INITIAL_LINES=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
   fi
   # Configurable log patterns — override via env to support different providers
-  MAX_TURNS_PATTERN="${MAX_TURNS_GREP_PATTERN:-error_max_turns}"
+  MAX_TURNS_PATTERN="${MAX_TURNS_GREP_PATTERN:-^{.*\"subtype\":\"error_max_turns\"}"
   if [ -n "${RESULT_GREP_PATTERN:-}" ]; then
     RESULT_PATTERN="$RESULT_GREP_PATTERN"
   else
-    RESULT_PATTERN='"type":"result"'
+    RESULT_PATTERN='^{"type":"result"'
   fi
   (
     while true; do
@@ -216,7 +216,7 @@ podman run --rm \
   --security-opt mask=/proc/timer_list \
   --security-opt mask=/proc/sched_debug \
   --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=256m \
+  --tmpfs /tmp:rw,nosuid,size=256m \
   --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \
   --memory 4g \
   --pids-limit 512 \
