@@ -6,6 +6,23 @@ import { readFile, stat, appendFile } from "fs/promises";
 import { join } from "path";
 import { getProvider } from "../providers";
 import type { ParsedLogEntry } from "../types";
+
+function mergeToolOutputs(entries: ParsedLogEntry[]): ParsedLogEntry[] {
+  const outputMap = new Map<string, string>();
+  for (const e of entries) {
+    if (e.type === "raw" && e.icon === "tool_result" && e.tool_use_id) {
+      outputMap.set(e.tool_use_id, e.text);
+    }
+  }
+  return entries
+    .filter((e) => !(e.type === "raw" && e.icon === "tool_result"))
+    .map((e) => {
+      if (e.type === "tool_call" && e.tool_use_id && outputMap.has(e.tool_use_id)) {
+        return { ...e, output: outputMap.get(e.tool_use_id) };
+      }
+      return e;
+    });
+}
 import { getServerConfig } from "./config-store";
 
 async function fileExists(path: string): Promise<boolean> {
@@ -169,7 +186,8 @@ export const tasksRouter = router({
         }
       }
 
-      if (input.tail) return entries.slice(-input.tail);
-      return entries;
+      const merged = mergeToolOutputs(entries);
+      if (input.tail) return merged.slice(-input.tail);
+      return merged;
     }),
 });

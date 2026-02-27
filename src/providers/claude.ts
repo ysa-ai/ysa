@@ -261,7 +261,26 @@ function parseClaudeLogLine(rawLine: string): ParsedLogEntry | null {
           icon: "tool",
           tool: block.name,
           text: detail,
+          tool_use_id: block.id,
         };
+      }
+    }
+  }
+
+  if (obj.type === "user" && obj.message?.content) {
+    for (const block of obj.message.content) {
+      if (block.type === "tool_result" && block.tool_use_id) {
+        let content = "";
+        if (typeof block.content === "string") {
+          content = block.content;
+        } else if (Array.isArray(block.content)) {
+          content = block.content
+            .filter((b: any) => b.type === "text")
+            .map((b: any) => b.text)
+            .join("\n");
+        }
+        if (content.length > 10000) content = "…" + content.slice(-10000);
+        return { type: "raw", icon: "tool_result", text: content, tool_use_id: block.tool_use_id };
       }
     }
   }
