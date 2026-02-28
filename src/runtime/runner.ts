@@ -3,6 +3,7 @@ import { join } from "path";
 import { getProvider } from "../providers";
 import { createWorktree, prepareWorktree } from "./worktree";
 import { spawnSandbox } from "./container";
+import { getOrCreateAuthToken } from "../api/config-store";
 import type { RunConfig, RunResult, TaskStatus } from "../types";
 
 function progressEntry(message: string): string {
@@ -30,7 +31,7 @@ export async function runTask(config: RunConfig): Promise<RunResult> {
   await mkdir(logDir, { recursive: true });
   await mkdir(config.worktreePrefix, { recursive: true });
 
-  // 1. Create worktree (skip if resuming — worktree already exists)
+  // 1. Create worktree (skip if resuming - worktree already exists)
   if (!config.resumeSessionId) {
     await appendFile(logPath, progressEntry("Creating git worktree..."));
     const wt = await createWorktree(config.projectRoot, worktree, branch, baseBranch);
@@ -78,6 +79,7 @@ export async function runTask(config: RunConfig): Promise<RunResult> {
   const startTime = Date.now();
   const env: Record<string, string> = { ...authEnv, ...containerConfig.envVars };
   if (config.promptUrl) env.PROMPT_URL = config.promptUrl;
+  env.PROMPT_TOKEN = getOrCreateAuthToken();
 
   const proc = spawnSandbox({
     worktree,
