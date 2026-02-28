@@ -174,7 +174,7 @@ export const taskActionsRouter = router({
 
       // Ensure proxy is running if strict mode
       if (networkPolicy === "strict") {
-        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, bypassHosts);
+        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, bypassHosts, serverConfig.port);
       }
 
       // Insert queued task
@@ -320,7 +320,7 @@ export const taskActionsRouter = router({
       const taskNetworkPolicy = (task.network_policy ?? "none") as "none" | "strict";
       if (taskNetworkPolicy === "strict") {
         const { scopedRules, bypassHosts: extraBypass } = parseAllowedHosts(task.allowed_hosts);
-        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...getProvider(task.provider ?? "claude").bypassHosts, ...extraBypass]);
+        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...getProvider(task.provider ?? "claude").bypassHosts, ...extraBypass], serverConfig.port);
       }
 
       const config: RunConfig = {
@@ -400,7 +400,7 @@ export const taskActionsRouter = router({
       const continueNetworkPolicy = (task.network_policy ?? "none") as "none" | "strict";
       if (continueNetworkPolicy === "strict") {
         const { scopedRules, bypassHosts: extraBypass } = parseAllowedHosts(task.allowed_hosts);
-        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...getProvider(task.provider ?? "claude").bypassHosts, ...extraBypass]);
+        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...getProvider(task.provider ?? "claude").bypassHosts, ...extraBypass], serverConfig.port);
       }
 
       const config: RunConfig = {
@@ -480,7 +480,7 @@ export const taskActionsRouter = router({
       const refineNetworkPolicy = (task.network_policy ?? "none") as "none" | "strict";
       if (refineNetworkPolicy === "strict") {
         const { scopedRules, bypassHosts: extraBypass } = parseAllowedHosts(task.allowed_hosts);
-        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...getProvider(task.provider ?? "claude").bypassHosts, ...extraBypass]);
+        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...getProvider(task.provider ?? "claude").bypassHosts, ...extraBypass], serverConfig.port);
       }
 
       const config: RunConfig = {
@@ -616,7 +616,7 @@ export const taskActionsRouter = router({
 
       if (taskNetPolicy === "strict") {
         const { scopedRules, bypassHosts: extraBypass } = parseAllowedHosts(task.allowed_hosts);
-        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...taskAdapter.bypassHosts, ...extraBypass]);
+        await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...taskAdapter.bypassHosts, ...extraBypass], serverConfig.port);
       }
 
       const launcherPath = `/tmp/claude-refine-${input.taskId}.sh`;

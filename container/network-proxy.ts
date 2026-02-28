@@ -37,16 +37,32 @@ interface StrictPolicy {
   scopedAllowRules: ScopedAllowRule[]; // MCP tool hosts — allow all methods for specific project paths
 }
 
-// Non-provider-specific bypass hosts always allowed through the proxy
+// Non-provider-specific bypass hosts always allowed through the proxy.
+// Entries may be "host" or "host:port" — port-qualified entries only match that specific port.
 const BASE_BYPASS_HOSTS = [
-  "host.containers.internal",
-  "http-intake.logs.us5.datadoghq.com",
   "registry.npmjs.org",
   "pypi.org",
   "files.pythonhosted.org",
   "crates.io",
   "static.crates.io",
 ];
+
+// Check if hostname (+ optional port) matches a bypass list entry.
+// Entry format: "host" (any port) or "host:port" (exact port required).
+function isBypassHost(hosts: string[], hostname: string, port?: number): boolean {
+  return hosts.some((entry) => {
+    const lastColon = entry.lastIndexOf(":");
+    if (lastColon > 0) {
+      const entryPort = parseInt(entry.slice(lastColon + 1), 10);
+      if (!isNaN(entryPort)) {
+        const entryHost = entry.slice(0, lastColon);
+        const hostMatch = hostname === entryHost || hostname.endsWith(`.${entryHost}`);
+        return hostMatch && port === entryPort;
+      }
+    }
+    return hostname === entry || hostname.endsWith(`.${entry}`);
+  });
+}
 
 // Provider-specific bypass hosts come from PROXY_BYPASS_HOSTS env var (comma-separated)
 // e.g. "api.anthropic.com,statsig.anthropic.com" for Claude
@@ -166,17 +182,19 @@ function shannonEntropy(s: string): number {
 }
 
 function inspectRequest(method: string, url: string, headers: Record<string, string>, hasBody: boolean, domain: string): { allowed: boolean; reason: string } {
-  if (policy.bypassHosts.some((h) => domain === h || domain.endsWith(`.${h}`))) {
-    return { allowed: true, reason: "bypass_host" };
-  }
-
-  // Parse URL early — needed for both scoped allow and length/entropy checks
+  // Parse URL early — needed for bypass port check and length/entropy checks
   let urlPart = url;
+  let urlPort: number | undefined;
   try {
     const parsed = new URL(url.startsWith("http") ? url : `http://${domain}${url}`);
     urlPart = parsed.pathname + parsed.search;
+    if (parsed.port) urlPort = parseInt(parsed.port, 10);
   } catch {
     return { allowed: false, reason: "invalid_url" };
+  }
+
+  if (isBypassHost(policy.bypassHosts, domain, urlPort)) {
+    return { allowed: true, reason: "bypass_host" };
   }
 
   // Scoped allow — matches host + URL path prefix, allows all methods (POST, PUT, etc.)
@@ -493,7 +511,7 @@ async function getOrCreateMitmListener(hostname: string, upstreamPort: number): 
 
 async function handleConnect(clientSocket: Socket, hostname: string, upstreamPort: number, taskId: string) {
   // Bypass hosts — tunnel directly without MITM
-  if (policy.bypassHosts.some((h) => hostname === h || hostname.endsWith(`.${h}`))) {
+  if (isBypassHost(policy.bypassHosts, hostname, upstreamPort)) {
     log("ALLOW", "CONNECT", `${hostname}:${upstreamPort}`, "bypass_host", taskId);
     const upstream = new Socket();
     upstream.connect(upstreamPort, hostname, () => {
