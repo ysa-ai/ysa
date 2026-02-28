@@ -10,7 +10,7 @@ import { removeWorktree } from "../runtime/worktree";
 import { getProvider } from "../providers";
 import { ensureProxy } from "../runtime/proxy";
 import type { ScopedAllowRule } from "../runtime/proxy";
-import { getServerConfig } from "./config-store";
+import { getServerConfig, getOrCreateAuthToken } from "./config-store";
 import type { RunConfig } from "../types";
 
 // Parse comma-separated allow entries into scoped rules + bypass hosts.
@@ -198,6 +198,7 @@ export const taskActionsRouter = router({
       const promptKey = taskId;
       await fetch(`http://localhost:${serverConfig.port}/api/prompt/${promptKey}`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${getOrCreateAuthToken()}` },
         body: wrapPrompt(input.prompt),
       });
       const promptUrl = `http://host.containers.internal:${serverConfig.port}/api/prompt/${promptKey}`;
@@ -313,6 +314,7 @@ export const taskActionsRouter = router({
       // Store prompt for container to fetch (with result + abort instructions appended)
       await fetch(`http://localhost:${serverConfig.port}/api/prompt/${input.taskId}`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${getOrCreateAuthToken()}` },
         body: wrapPrompt(task.prompt),
       });
       const promptUrl = `http://host.containers.internal:${serverConfig.port}/api/prompt/${input.taskId}`;
