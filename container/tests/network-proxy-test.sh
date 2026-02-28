@@ -14,6 +14,7 @@ SKIP=0
 TESTS=0
 IMAGE="sandbox-claude"
 PROXY="http://host.containers.internal:3128"
+SERVER_PORT="${SERVER_PORT:-4000}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -98,6 +99,14 @@ fi
 
 echo "Proxy container: running"
 echo "Image: $IMAGE"
+echo "Server port: $SERVER_PORT"
+
+# Verify proxy has the correct server port bypass
+PROXY_ENV=$(podman inspect ysa-proxy --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
+if ! echo "$PROXY_ENV" | grep -q "host\.containers\.internal:${SERVER_PORT}"; then
+  echo "WARNING: Proxy does not have host.containers.internal:${SERVER_PORT} in PROXY_BYPASS_HOSTS."
+  echo "  Bypass port tests will reflect that. Start proxy via ensureProxy() with the correct serverPort."
+fi
 echo ""
 
 # ─── 1. HTTP Method Filtering ────────────────────────────────────────────
@@ -294,15 +303,24 @@ check "Cannot exfiltrate via long URL path (encoded)" \
 echo ""
 
 # ─── 11. Bypass Hosts ───────────────────────────────────────────────────
-echo "--- 11. Bypass Host (host.containers.internal) ---"
-# Bypass host should allow ALL methods (needed for prompt delivery + dashboard API)
-check "Bypass host GET allowed" \
+echo "--- 11. Bypass Hosts (port-restricted) ---"
+# host.containers.internal is port-restricted: only SERVER_PORT is bypassed (all methods allowed)
+# Any other port goes through strict policy (POST blocked, GET inspected)
+check "Correct port on host.containers.internal: GET allowed (bypassed)" \
   "allow" \
-  'curl -sf -o /dev/null -w "%{http_code}" -x '"$PROXY"' http://host.containers.internal:4000/ 2>/dev/null; true'
+  'curl -sf -o /dev/null -w "%{http_code}" -x '"$PROXY"' http://host.containers.internal:'"$SERVER_PORT"'/ 2>/dev/null; true'
 
-check "Bypass host POST allowed" \
+check "Correct port on host.containers.internal: POST allowed (bypassed)" \
   "allow" \
-  'curl -sf -o /dev/null -w "%{http_code}" -x '"$PROXY"' -X POST -d "data" http://host.containers.internal:4000/ 2>/dev/null; true'
+  'curl -sf -o /dev/null -w "%{http_code}" -x '"$PROXY"' -X POST -d "data" http://host.containers.internal:'"$SERVER_PORT"'/ 2>/dev/null; true'
+
+check "Wrong port on host.containers.internal: POST blocked (not bypassed)" \
+  "block" \
+  'curl -sf -x '"$PROXY"' -X POST -d "data" http://host.containers.internal:9999/'
+
+check "Datadog telemetry endpoint blocked" \
+  "block" \
+  'curl -sf -x '"$PROXY"' http://http-intake.logs.us5.datadoghq.com/v1/input'
 
 echo ""
 
@@ -525,16 +543,18 @@ else
 fi
 
 # Server port allowed
-echo -n "  [$((TESTS + 1))] Server port (4000) allowed by iptables ... "
+# exit 0 = HTTP response, exit 7 = TCP refused (port reachable, no server) — both mean iptables allowed it
+# exit 28 = timeout — iptables dropped it
+echo -n "  [$((TESTS + 1))] Server port ($SERVER_PORT) allowed by iptables ... "
 TESTS=$((TESTS + 1))
-code=$(podman run --rm --network slirp4netns \
+curl_exit=$(podman run --rm --network slirp4netns \
   --annotation network_policy=strict \
-  "$IMAGE" -c 'curl -s --connect-timeout 5 -o /dev/null -w "%{http_code}" http://host.containers.internal:4000/' 2>&1)
-if [ "$code" != "000" ]; then
-  echo "PASS (connection allowed, HTTP $code)"
+  "$IMAGE" -c "curl -s --connect-timeout 5 -o /dev/null http://host.containers.internal:${SERVER_PORT}/; echo \$?" 2>&1 | tail -1)
+if [ "$curl_exit" = "0" ] || [ "$curl_exit" = "7" ]; then
+  echo "PASS (port reachable, curl exit $curl_exit)"
   PASS=$((PASS + 1))
 else
-  echo "FAIL (connection blocked)"
+  echo "FAIL (port blocked — curl exit $curl_exit)"
   FAIL=$((FAIL + 1))
 fi
 

@@ -104,9 +104,10 @@ export async function stopProxy(): Promise<void> {
   await runShell(`podman rm -f ${PROXY_CONTAINER_NAME} 2>/dev/null || true`);
 }
 
-export async function ensureProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: string[]): Promise<void> {
+export async function ensureProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: string[], serverPort?: number): Promise<void> {
   const needed = scopedRules ?? [];
   const hosts = bypassHosts ?? DEFAULT_BYPASS_HOSTS;
+  const allHosts = serverPort ? [...hosts, `host.containers.internal:${serverPort}`] : hosts;
   const running = await isProxyRunning();
 
   if (running) {
@@ -115,7 +116,7 @@ export async function ensureProxy(scopedRules?: ScopedAllowRule[], bypassHosts?:
     const missingRules = needed.filter(
       (n) => !containerRules.some((c) => c.host === n.host && c.pathPrefix === n.pathPrefix),
     );
-    const missingHosts = hosts.filter((h) => !containerHosts.includes(h));
+    const missingHosts = allHosts.filter((h) => !containerHosts.includes(h));
     if (missingRules.length === 0 && missingHosts.length === 0) return;
 
     await stopProxy();
@@ -123,6 +124,6 @@ export async function ensureProxy(scopedRules?: ScopedAllowRule[], bypassHosts?:
     const mergedHosts = [...new Set([...containerHosts, ...missingHosts])];
     await startProxy(mergedRules, mergedHosts);
   } else {
-    await startProxy(needed, hosts);
+    await startProxy(needed, allHosts);
   }
 }
