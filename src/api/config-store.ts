@@ -11,6 +11,8 @@ export type AppConfig = {
   anthropic_api_key: string | null;
   mistral_api_key: string | null;
   auth_token: string | null;
+  has_anthropic_key?: boolean;
+  has_mistral_key?: boolean;
 };
 
 export function getConfig(): AppConfig {

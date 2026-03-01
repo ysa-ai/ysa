@@ -39,6 +39,8 @@ export function Setup({ onComplete, onClose }: SetupProps) {
   const [port, setPort] = useState("4000");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [mistralKey, setMistralKey] = useState("");
+  const [anthropicKeyChanged, setAnthropicKeyChanged] = useState(false);
+  const [mistralKeyChanged, setMistralKeyChanged] = useState(false);
   const [error, setError] = useState("");
 
   // Pre-populate from existing config in settings mode
@@ -47,8 +49,6 @@ export function Setup({ onComplete, onClose }: SetupProps) {
     if (currentConfig.project_root) setProjectRoot(currentConfig.project_root);
     if (currentConfig.default_network_policy) setNetworkPolicy(currentConfig.default_network_policy as "none" | "strict");
     if (currentConfig.port) setPort(String(currentConfig.port));
-    if (currentConfig.anthropic_api_key) setAnthropicKey(currentConfig.anthropic_api_key);
-    if (currentConfig.mistral_api_key) setMistralKey(currentConfig.mistral_api_key);
     if (currentConfig.default_model) {
       const matchedProvider = Object.entries(MODELS_BY_PROVIDER).find(([, models]) =>
         models.some((m) => m.id === currentConfig.default_model)
@@ -65,12 +65,16 @@ export function Setup({ onComplete, onClose }: SetupProps) {
     onError: (err) => setError(err.message),
   });
 
+  const setApiKey = trpc.config.setApiKey.useMutation({
+    onError: (err) => setError(err.message),
+  });
+
   const pickDirectory = trpc.config.pickDirectory.useMutation({
     onSuccess: (data) => { if (data.path) setProjectRoot(data.path); },
     onError: (err) => setError(err.message),
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!projectRoot.trim()) { setError("Project root is required"); return; }
     const parsedPort = parseInt(port);
@@ -78,13 +82,17 @@ export function Setup({ onComplete, onClose }: SetupProps) {
       setError("Port must be between 1024 and 65535");
       return;
     }
+    if (anthropicKeyChanged && anthropicKey.trim()) {
+      await setApiKey.mutateAsync({ provider: "anthropic", value: anthropicKey.trim() });
+    }
+    if (mistralKeyChanged && mistralKey.trim()) {
+      await setApiKey.mutateAsync({ provider: "mistral", value: mistralKey.trim() });
+    }
     setConfig.mutate({
       project_root: projectRoot.trim(),
       default_model: model || null,
       default_network_policy: networkPolicy,
       port: port ? parsedPort : null,
-      anthropic_api_key: anthropicKey.trim() || null,
-      mistral_api_key: mistralKey.trim() || null,
     });
   };
 
@@ -181,8 +189,8 @@ export function Setup({ onComplete, onClose }: SetupProps) {
             <input
               type="password"
               value={anthropicKey}
-              onChange={(e) => setAnthropicKey(e.target.value)}
-              placeholder="sk-ant-..."
+              onChange={(e) => { setAnthropicKey(e.target.value); setAnthropicKeyChanged(true); }}
+              placeholder={currentConfig?.has_anthropic_key ? "Key configured — enter new value to update" : "sk-ant-..."}
               className="w-full bg-bg-inset border border-border rounded-lg px-3.5 py-2.5 text-[13px] text-text-primary placeholder-text-faint focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all font-mono"
             />
           </div>
@@ -194,8 +202,8 @@ export function Setup({ onComplete, onClose }: SetupProps) {
             <input
               type="password"
               value={mistralKey}
-              onChange={(e) => setMistralKey(e.target.value)}
-              placeholder="••••••••••••••••"
+              onChange={(e) => { setMistralKey(e.target.value); setMistralKeyChanged(true); }}
+              placeholder={currentConfig?.has_mistral_key ? "Key configured — enter new value to update" : "••••••••••••••••"}
               className="w-full bg-bg-inset border border-border rounded-lg px-3.5 py-2.5 text-[13px] text-text-primary placeholder-text-faint focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all font-mono"
             />
           </div>

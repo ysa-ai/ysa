@@ -27,8 +27,8 @@ const VIBE_TOOL_NAMES = new Set(Object.values(TOOL_MAP));
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 async function getMistralAuthEnv(): Promise<Record<string, string>> {
-  const { getConfig } = await import("../api/config-store");
-  const apiKey = getConfig().mistral_api_key;
+  const { getApiKey } = await import("../api/keystore");
+  const apiKey = await getApiKey("mistral");
   if (!apiKey) {
     throw new Error("Mistral API key is not configured. Set it in Settings.");
   }
@@ -119,23 +119,31 @@ function parseMistralOutput(logContent: string, skipLinesBefore = 0): ParsedOutp
   for (const line of relevantLines) {
     if (!line.trim()) continue;
 
+    let parsed: any;
     try {
-      const parsed = JSON.parse(line);
-
-      if (parsed.type === "result" && parsed.stop_reason === "max_turns") {
-        maxTurnsReached = true;
-      }
-
-      if (parsed.role === "assistant" && typeof parsed.content === "string") {
-        lastError = parsed.content.slice(0, 200);
-        const abortMatch = parsed.content.match(/\[TASK_ABORTED\]:\s*(.*)/);
-        if (abortMatch) {
-          agentAborted = true;
-          abortReason = abortMatch[1].trim().slice(0, 200);
-        }
-      }
+      parsed = JSON.parse(line);
     } catch {
-      // Not JSON — skip
+      // Not JSON — vibe emits plain-text errors on auth failure, capture as lastError
+      lastError = line.trim().slice(0, 300);
+      continue;
+    }
+
+    if (parsed.type === "result" && parsed.stop_reason === "max_turns") {
+      maxTurnsReached = true;
+    }
+
+    // JSON error objects (e.g. {"type":"error","message":"..."})
+    if (parsed.type === "error" && parsed.message) {
+      lastError = String(parsed.message).slice(0, 300);
+    }
+
+    if (parsed.role === "assistant" && typeof parsed.content === "string") {
+      lastError = parsed.content.slice(0, 200);
+      const abortMatch = parsed.content.match(/\[TASK_ABORTED\]:\s*(.*)/);
+      if (abortMatch) {
+        agentAborted = true;
+        abortReason = abortMatch[1].trim().slice(0, 200);
+      }
     }
   }
 
