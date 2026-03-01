@@ -2,8 +2,9 @@ import { z } from "zod";
 import { router, publicProcedure } from "./init";
 import { getDb, schema } from "../db";
 import { eq } from "drizzle-orm";
-import { writeFile, readFile, stat } from "fs/promises";
+import { writeFile, readFile, stat, unlink, mkdir } from "fs/promises";
 import { join } from "path";
+import { homedir } from "os";
 import { runTask } from "../runtime/runner";
 import { stopContainer, teardownContainer, SECCOMP_PROFILE } from "../runtime/container";
 import { removeWorktree } from "../runtime/worktree";
@@ -34,6 +35,10 @@ function parseAllowedHosts(raw: string | null | undefined): { scopedRules: Scope
 
 async function fileExists(path: string): Promise<boolean> {
   try { await stat(path); return true; } catch { return false; }
+}
+
+export function shellescape(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 const RESULT_SUFFIX = `
@@ -621,9 +626,21 @@ export const taskActionsRouter = router({
         await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...taskAdapter.bypassHosts, ...extraBypass], serverConfig.port);
       }
 
-      const launcherPath = `/tmp/claude-refine-${input.taskId}.sh`;
+      const launchersDir = join(homedir(), ".ysa", "launchers");
+      await mkdir(launchersDir, { recursive: true, mode: 0o700 });
+
+      const launcherPath = join(launchersDir, `claude-refine-${input.taskId}.sh`);
+      const tokenEnvPath = join(launchersDir, `token-${input.taskId}.env`);
+
+      await writeFile(tokenEnvPath, `CLAUDE_CODE_OAUTH_TOKEN=${shellescape(oauthToken)}\n`, { mode: 0o600 });
+
       const launcherScript = `#!/bin/bash
 set -euo pipefail
+
+# Load credentials and remove the file immediately
+# shellcheck source=/dev/null
+source ${shellescape(tokenEnvPath)}
+rm -f ${shellescape(tokenEnvPath)}
 
 echo -e "\\033[90mStarting sandbox for task ${input.taskId.slice(0, 8)}...\\033[0m"
 podman rm -f "refine-${input.taskId}" 2>/dev/null || true
@@ -634,17 +651,17 @@ podman run --rm -it \\
   --add-host host.containers.internal:host-gateway \\
   --cap-drop ALL \\
   --security-opt no-new-privileges \\
-  --security-opt seccomp="${SECCOMP_PROFILE}" \\
+  --security-opt seccomp=${shellescape(SECCOMP_PROFILE)} \\
   --read-only \\
   --tmpfs /tmp:rw,nosuid,size=256m \\
   --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \\
   --memory 4g \\
   --pids-limit 512 \\
   --cpus 2 \\
-  -e CLAUDE_CODE_OAUTH_TOKEN="${oauthToken}" \\
+  -e CLAUDE_CODE_OAUTH_TOKEN \\
   ${proxyEnv} \\
-  -v "${worktree}:/workspace:rw" \\
-  -v "${gitDir}:/repo.git:rw" \\
+  -v ${shellescape(worktree)}:/workspace:rw \\
+  -v ${shellescape(gitDir)}:/repo.git:rw \\
   --mount "type=volume,src=${sessionVolume},dst=/home/agent" \\
   sandbox-claude \\
   -c "
@@ -670,15 +687,19 @@ podman run --rm -it \\
   "
 
 # Restore host worktree pointer
-echo "gitdir: ${gitDir}/worktrees/${worktreeName}" > "${worktree}/.git"
-echo "${worktree}/.git" > "${gitDir}/worktrees/${worktreeName}/gitdir"
+echo "gitdir: ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}" > ${shellescape(worktree)}/.git
+echo ${shellescape(worktree)}/.git > ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}/gitdir
 `;
 
-      await writeFile(launcherPath, launcherScript, { mode: 0o755 });
+      await writeFile(launcherPath, launcherScript, { mode: 0o700 });
 
       const { getConfig } = await import("./config-store");
       const terminalId = getConfig().preferred_terminal ?? "terminal";
       await openInTerminal(launcherPath, input.taskId.slice(0, 8), terminalId);
+
+      setTimeout(async () => {
+        try { await unlink(launcherPath); } catch {}
+      }, 3000);
 
       return { ok: true, session_id: sessionId, launcherPath };
     }),
