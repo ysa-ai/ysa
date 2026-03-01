@@ -221,8 +221,8 @@ echo "--- 14. Symlink Escape Attempts ---"
 # Symlink from workspace to sensitive host paths
 check "Symlink to /etc/shadow from workspace" "block" 'ln -sf /etc/shadow /workspace/.shadow-escape 2>/dev/null && cat /workspace/.shadow-escape'
 rm -f /workspace/.shadow-escape 2>/dev/null
-# /proc/1/environ is readable in rootless containers (same uid ns) — document as known
-check "Symlink to /proc/1/environ (KNOWN - rootless uid)" "allow" 'ln -sf /proc/1/environ /workspace/.proc-escape 2>/dev/null && cat /workspace/.proc-escape >/dev/null && rm -f /workspace/.proc-escape'
+# symlink syscall is blocked by seccomp; ln -sf will fail with EPERM
+check "Symlink creation blocked by seccomp" "block" 'ln -sf /proc/1/environ /workspace/.proc-escape 2>/dev/null'
 # Path traversal outside workspace via symlink
 check "Cannot traverse to host /etc via symlinks" "block" 'ln -sf /etc/hostname /workspace/.host-escape 2>/dev/null && cat /workspace/.host-escape | grep -v "^[a-f0-9]" | head -1'
 rm -f /workspace/.host-escape 2>/dev/null
@@ -554,6 +554,21 @@ check "Hook guard cannot be patched via sed" "block" 'sed -i "s/BLOCKED/ALLOWED/
 check "settings.json is read-only (bind mount)" "block" 'echo "{}" > /home/agent/.claude/settings.json'
 check "settings.json references immutable guard path" "allow" 'grep -q "etc/claude-defaults/hooks/sandbox-guard.sh" /home/agent/.claude/settings.json'
 check "Hook guard is executable at image-layer path" "allow" '[ -x /etc/claude-defaults/hooks/sandbox-guard.sh ]'
+
+echo ""
+echo "--- 40. Seccomp: Targeted Syscall Removals ---"
+# symlink/symlinkat blocked
+check "symlink syscall blocked (seccomp)" "block" \
+  'ln -s /etc/passwd /tmp/seccomp-sym-test 2>/dev/null; result=$?; rm -f /tmp/seccomp-sym-test; [ $result -ne 0 ]'
+# link/linkat blocked (within-workspace hard link attempt)
+check "link syscall blocked (seccomp)" "block" \
+  'ln /workspace/package.json /workspace/.seccomp-hardlink-test 2>/dev/null; result=$?; rm -f /workspace/.seccomp-hardlink-test; [ $result -ne 0 ]'
+# clone CLONE_NEWNS blocked
+check "clone(CLONE_NEWNS) blocked — mount namespace creation" "block" \
+  'unshare --mount /bin/true 2>/dev/null'
+# vfork: not directly callable from bash; verify via seccomp profile inspection
+check "vfork absent from seccomp allowlist" "allow" \
+  '! grep -q "\"vfork\"" /workspace/container/seccomp.json'
 
 echo ""
 echo "=========================================="
