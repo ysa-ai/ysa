@@ -29,17 +29,17 @@ app.use(
   }),
 );
 
-// ─── Prompt store (generic endpoint for container to fetch prompt) ────
+// Prompt store (generic endpoint for container to fetch prompt)
 const promptStore = new Map<string, string>();
 
-app.post("/api/prompt/:id", async (c) => {
+app.post("/api/prompt/:id", requireLocalToken, async (c) => {
   const id = c.req.param("id");
   const body = await c.req.text();
   promptStore.set(id, body);
   return c.json({ ok: true });
 });
 
-app.get("/api/prompt/:id", (c) => {
+app.get("/api/prompt/:id", requireLocalToken, (c) => {
   const id = c.req.param("id");
   const content = promptStore.get(id);
   if (!content) return c.text("", 404);
@@ -51,7 +51,7 @@ app.get("/api/token", (c) => {
   return c.text(getOrCreateAuthToken());
 });
 
-// Serve built Vite assets — inject token into index.html
+// Serve built Vite assets - inject token into index.html
 const distDir = join(import.meta.dir, "..", "..", "dist");
 app.get("/", async (c) => {
   const token = getOrCreateAuthToken();

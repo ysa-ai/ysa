@@ -1,19 +1,19 @@
 #!/bin/bash
-# sandbox-run.sh — Launch a hardened sandbox container for an AI agent session
+# sandbox-run.sh -- Launch a hardened sandbox container for an AI agent session
 #
 # Usage: sandbox-run.sh <worktree> <repo_git_dir> <branch> <mode> <task_id> [command...]
 #
 # Modes: readonly, readwrite
 #
-# Mounts: worktree (/workspace), git dir (/repo.git) — nothing else.
+# Mounts: worktree (/workspace), git dir (/repo.git) -- nothing else.
 # Session persistence via podman named volume (task-session-{task_id}).
 # Log capture via stdout pipe on host (tee).
 #
 # Required env vars:
-#   CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY — auth for Claude CLI
+#   CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY -- auth for Claude CLI
 # Optional env vars:
-#   SANDBOX_TIMEOUT    — container timeout in seconds (default: 3600)
-#   LOG_FILE           — host path for output log (captured via tee)
+#   SANDBOX_TIMEOUT    -- container timeout in seconds (default: 3600)
+#   LOG_FILE           -- host path for output log (captured via tee)
 
 set -euo pipefail
 
@@ -22,7 +22,7 @@ IMAGE="${AGENT_IMAGE:-sandbox-claude}"
 SECCOMP_PROFILE="$SCRIPT_DIR/seccomp.json"
 TIMEOUT="${SANDBOX_TIMEOUT:-3600}"  # default 1 hour
 
-# ── Args ──────────────────────────────────────────────────────────────
+# -- Args ----------------------------------------------------------------------
 if [ $# -lt 5 ]; then
   echo "Usage: $0 <worktree> <repo_git_dir> <branch> <mode> <task_id> [command...]"
   echo "Modes: readonly, readwrite"
@@ -53,7 +53,7 @@ for arg in "$@"; do
   QUOTED_ARGS+=" $escaped"
 done
 
-# ── Validate ──────────────────────────────────────────────────────────
+# -- Validate ------------------------------------------------------------------
 if [ ! -d "$WORKTREE" ]; then
   echo "ERROR: Worktree not found: $WORKTREE" >&2; exit 1
 fi
@@ -66,7 +66,7 @@ fi
 
 WORKTREE_NAME="$(basename "$WORKTREE")"
 
-# ── Mode-based access control ────────────────────────────────────────
+# -- Mode-based access control ------------------------------------------------
 case "$MODE" in
   readonly)
     REPO_MOUNT="$REPO_GIT:/repo.git:ro"
@@ -82,17 +82,17 @@ case "$MODE" in
     ;;
 esac
 
-# ── Session volume ────────────────────────────────────────────────────
+# -- Session volume ------------------------------------------------------------
 SESSION_VOLUME="task-session-${TASK_ID}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
 
-# ── Git worktree pointer ──────────────────────────────────────────────
+# -- Git worktree pointer ------------------------------------------------------
 # Write container-internal git pointers from the host before container starts,
 # so the container sees the correct paths without needing write access to them.
 echo "gitdir: /repo.git/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
 echo "/workspace/.git" > "$REPO_GIT/worktrees/$WORKTREE_NAME/gitdir"
 
-# ── Network policy ───────────────────────────────────────────────────
+# -- Network policy -----------------------------------------------------------
 NETWORK_POLICY="${NETWORK_POLICY:-none}"
 NETWORK_FLAGS=""
 PROXY_ENV_FLAGS=""
@@ -106,7 +106,7 @@ if [ "$NETWORK_POLICY" = "strict" ] || [ "$NETWORK_POLICY" = "custom" ]; then
   fi
 fi
 
-# ── Audit log (to stderr, captured by caller) ─────────────────────────
+# -- Audit log (to stderr, captured by caller) ---------------------------------
 echo "=== Sandbox Audit Log ===" >&2
 echo "Mode: $SANDBOX_MODE" >&2
 echo "Task: $TASK_ID" >&2
@@ -120,26 +120,26 @@ echo "OAuth: ${CLAUDE_CODE_OAUTH_TOKEN:+set}" >&2
 echo "API Key: ${ANTHROPIC_API_KEY:+set}" >&2
 echo "=========================" >&2
 
-# ── Runtime version checks ────────────────────────────────────────────
+# -- Runtime version checks ----------------------------------------------------
 podman_ver=$(podman version --format '{{.Client.Version}}' 2>/dev/null || echo "unknown")
 runtime_ver=$(podman info --format '{{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Version}}' 2>/dev/null | head -1 || echo "unknown")
 echo "Podman: $podman_ver, Runtime: $runtime_ver" >&2
 
-# ── Progress helper ──────────────────────────────────────────────────
+# -- Progress helper ----------------------------------------------------------
 progress() {
   if [ -n "${LOG_FILE:-}" ]; then
-    printf '{\"type\":\"system\",\"subtype\":\"progress\",\"message\":\"%s\"}\n' "$1" >> "$LOG_FILE"
+    printf '{"type":"system","subtype":"progress","message":"%s"}\n' "$1" >> "$LOG_FILE"
   fi
 }
 
-# ── Log capture setup ─────────────────────────────────────────────────
+# -- Log capture setup ---------------------------------------------------------
 if [ -n "${LOG_FILE:-}" ]; then
   TEE_CMD="tee -a $LOG_FILE"
 else
   TEE_CMD="cat"
 fi
 
-# ── Log monitor (background — watches for max_turns / result) ────────
+# -- Log monitor (background -- watches for max_turns / result) ----------------
 MONITOR_PID=""
 cleanup_monitor() {
   if [ -n "$MONITOR_PID" ]; then
@@ -156,7 +156,7 @@ if [ -n "${LOG_FILE:-}" ]; then
   if [ -f "$LOG_FILE" ]; then
     INITIAL_LINES=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
   fi
-  # Configurable log patterns — override via env to support different providers
+  # Configurable log patterns -- override via env to support different providers
   MAX_TURNS_PATTERN="${MAX_TURNS_GREP_PATTERN:-^{.*\"subtype\":\"error_max_turns\"}"
   if [ -n "${RESULT_GREP_PATTERN:-}" ]; then
     RESULT_PATTERN="$RESULT_GREP_PATTERN"
@@ -171,7 +171,7 @@ if [ -n "${LOG_FILE:-}" ]; then
         podman stop "sandbox-${TASK_ID}" >/dev/null 2>&1 || true
         break
       fi
-      # Stop container once the agent outputs a result — the CLI may do
+      # Stop container once the agent outputs a result -- the CLI may do
       # post-session telemetry that can hang behind the proxy.
       if echo "$NEW_CONTENT" | grep -q "$RESULT_PATTERN" 2>/dev/null; then
         sleep 3
@@ -184,7 +184,7 @@ if [ -n "${LOG_FILE:-}" ]; then
   MONITOR_PID=$!
 fi
 
-# ── Auth env vars for container ───────────────────────────────────────
+# -- Auth env vars for container -----------------------------------------------
 # AGENT_AUTH_ENV_FLAGS is pre-built by the caller (e.g. "-e ANTHROPIC_API_KEY")
 # Fall back to Claude defaults if not set (backward compat).
 if [ -n "${AGENT_AUTH_ENV_FLAGS+x}" ]; then
@@ -201,7 +201,7 @@ fi
 
 progress "Starting container (network: $NETWORK_POLICY)..."
 
-# ── Launch container ──────────────────────────────────────────────────
+# -- Launch container ----------------------------------------------------------
 podman run --rm \
   --name "sandbox-${TASK_ID}" \
   --label "task=${TASK_ID}" \
@@ -231,6 +231,7 @@ podman run --rm \
   $PROXY_ENV_FLAGS \
   $NETWORK_FLAGS \
   -e PROMPT_URL="${PROMPT_URL:-}" \
+  -e PROMPT_TOKEN="${PROMPT_TOKEN:-}" \
   ${EXTRA_POD_ENV:-} \
   -e ALLOWED_TOOLS="$ALLOWED_TOOLS_VALUE" \
   -e ENABLE_TOOL_SEARCH=false \
@@ -243,8 +244,8 @@ podman run --rm \
   --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent" \
   "$IMAGE" \
   -c "
-    # Progress helper (JSON to stdout → tee → LOG_FILE)
-    _progress() { printf '{\"type\":\"system\",\"subtype\":\"progress\",\"message\":\"%s\"}\n' \"\$1\"; }
+    # Progress helper (JSON to stdout -> tee -> LOG_FILE)
+    _progress() { printf '{\"type\":\"system\",\"subtype\":\"progress\",\"message\":\"%s\"}\\n' \"\$1\"; }
 
     # Provider-specific init (settings files, config, onboarding bypass, etc.)
     # AGENT_INIT_SCRIPT is set by the caller; falls back to Claude defaults if unset.
@@ -281,7 +282,7 @@ podman run --rm \
       *)
         if [ -n \"\$PROMPT_URL\" ]; then
           _progress 'Fetching prompt...'
-          PROMPT=\$(curl -sf \"\$PROMPT_URL\")
+          PROMPT=\$(curl --max-time 30 -sf -H \"Authorization: Bearer \$PROMPT_TOKEN\" \"\$PROMPT_URL\")
           if [ -z \"\$PROMPT\" ]; then
             echo 'ERROR: Failed to fetch prompt from PROMPT_URL' >&2
             exit 1
@@ -302,7 +303,7 @@ echo "" >&2
 echo "Finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
 echo "Exit code: $EXIT_CODE" >&2
 
-# ── Restore host worktree pointer ─────────────────────────────────────
+# -- Restore host worktree pointer ---------------------------------------------
 echo "gitdir: $REPO_GIT/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
 echo "$WORKTREE/.git" > "$REPO_GIT/worktrees/$WORKTREE_NAME/gitdir"
 
