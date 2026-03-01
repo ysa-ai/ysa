@@ -548,6 +548,14 @@ check "gpg.program overridden to empty" "allow" '[ -z "$(git -C /workspace confi
 check "protocol.ext.allow locked to never" "allow" '[ "$(git -C /workspace config protocol.ext.allow)" = "never" ]'
 
 echo ""
+echo "--- 39. Guard Tamper Protection ---"
+check "Hook guard in read-only image layer (write blocked)" "block" 'echo "pwned" > /etc/claude-defaults/hooks/sandbox-guard.sh'
+check "Hook guard cannot be patched via sed" "block" 'sed -i "s/BLOCKED/ALLOWED/" /etc/claude-defaults/hooks/sandbox-guard.sh'
+check "settings.json is read-only (bind mount)" "block" 'echo "{}" > /home/agent/.claude/settings.json'
+check "settings.json references immutable guard path" "allow" 'grep -q "etc/claude-defaults/hooks/sandbox-guard.sh" /home/agent/.claude/settings.json'
+check "Hook guard is executable at image-layer path" "allow" '[ -x /etc/claude-defaults/hooks/sandbox-guard.sh ]'
+
+echo ""
 echo "=========================================="
 echo " RESULTS: $PASS passed, $FAIL failed out of $TESTS tests"
 echo "=========================================="

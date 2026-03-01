@@ -57,18 +57,18 @@ RUN rm -f /usr/bin/passwd /usr/bin/chage /usr/bin/chfn /usr/bin/chsh \
          /usr/bin/wget /usr/bin/nc /usr/bin/netcat \
          2>/dev/null || true
 
-# Claude hooks and settings (security guard for in-container tool use)
-# Installed in /home/agent/.claude for direct use (e.g. attack-test.sh)
-# AND in /etc/claude-defaults for volume-mount initialization (see sandbox-run.sh)
-RUN mkdir -p /home/agent/.claude/hooks && chown -R agent:agent /home/agent/.claude
-COPY container-sandbox-guard.sh /home/agent/.claude/hooks/sandbox-guard.sh
-COPY claude-settings.json /home/agent/.claude/settings.json
-RUN chmod +x /home/agent/.claude/hooks/sandbox-guard.sh && \
+# Claude settings and security guard
+# settings.json goes into /home/agent/.claude (seeded into new session volumes)
+# sandbox-guard.sh goes ONLY into /etc/claude-defaults/hooks (read-only image layer)
+# settings.json references /etc/claude-defaults/hooks/sandbox-guard.sh so the agent
+# cannot modify the active hook regardless of what it does to /home/agent
+RUN mkdir -p /home/agent/.claude /etc/claude-defaults/hooks && \
     chown -R agent:agent /home/agent/.claude
-RUN mkdir -p /etc/claude-defaults/hooks && \
-    cp /home/agent/.claude/settings.json /etc/claude-defaults/settings.json && \
-    cp /home/agent/.claude/hooks/sandbox-guard.sh /etc/claude-defaults/hooks/sandbox-guard.sh && \
-    chmod +x /etc/claude-defaults/hooks/sandbox-guard.sh
+COPY claude-settings.json /home/agent/.claude/settings.json
+COPY claude-settings.json /etc/claude-defaults/settings.json
+COPY container-sandbox-guard.sh /etc/claude-defaults/hooks/sandbox-guard.sh
+RUN chmod +x /etc/claude-defaults/hooks/sandbox-guard.sh && \
+    chown -R agent:agent /home/agent/.claude
 
 # Network proxy — install shared CA cert so the agent trusts the MITM proxy
 COPY ca.pem /usr/local/share/ca-certificates/ysa-proxy-ca.crt
