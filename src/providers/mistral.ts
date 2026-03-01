@@ -27,8 +27,8 @@ const VIBE_TOOL_NAMES = new Set(Object.values(TOOL_MAP));
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 async function getMistralAuthEnv(): Promise<Record<string, string>> {
-  const { getConfig } = await import("../api/config-store");
-  const apiKey = getConfig().mistral_api_key;
+  const { getApiKey } = await import("../api/keystore");
+  const apiKey = await getApiKey("mistral");
   if (!apiKey) {
     throw new Error("Mistral API key is not configured. Set it in Settings.");
   }

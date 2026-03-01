@@ -4,13 +4,14 @@ import { serveStatic } from "hono/bun";
 import { trpcServer } from "@hono/trpc-server";
 import { coreRouter } from "../api";
 import { runMigrations } from "../db/migrate";
-import { getServerConfig, getOrCreateAuthToken } from "../api/config-store";
+import { getServerConfig, getOrCreateAuthToken, migrateApiKeysFromDb } from "../api/config-store";
 import { requireLocalToken } from "./auth";
 import { startResourcePoller } from "../lib/resources";
 import { stopProxy } from "../runtime/proxy";
 import { join } from "path";
 
 runMigrations();
+await migrateApiKeysFromDb();
 startResourcePoller();
 
 const { port: PORT } = getServerConfig();

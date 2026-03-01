@@ -3,6 +3,7 @@ import { access } from "fs/promises";
 import { join } from "path";
 import { router, publicProcedure } from "./init";
 import { getConfig, setConfig } from "./config-store";
+import { getApiKey, setApiKey, hasApiKey } from "./keystore";
 
 async function pickDirectoryNative(): Promise<string | null> {
   if (process.platform === "darwin") {
@@ -30,7 +31,14 @@ async function pickDirectoryNative(): Promise<string | null> {
 }
 
 export const configRouter = router({
-  get: publicProcedure.query(() => getConfig()),
+  get: publicProcedure.query(async () => {
+    const config = getConfig();
+    const [has_anthropic_key, has_mistral_key] = await Promise.all([
+      hasApiKey("anthropic"),
+      hasApiKey("mistral"),
+    ]);
+    return { ...config, has_anthropic_key, has_mistral_key };
+  }),
 
   pickDirectory: publicProcedure.mutation(async () => {
     const path = await pickDirectoryNative();
@@ -45,8 +53,6 @@ export const configRouter = router({
         default_network_policy: z.enum(["none", "strict"]).optional(),
         preferred_terminal: z.string().nullable().optional(),
         port: z.number().int().min(1024).max(65535).nullable().optional(),
-        anthropic_api_key: z.string().nullable().optional(),
-        mistral_api_key: z.string().nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -59,5 +65,20 @@ export const configRouter = router({
       }
       setConfig(input);
       return getConfig();
+    }),
+
+  setApiKey: publicProcedure
+    .input(
+      z.object({
+        provider: z.enum(["anthropic", "mistral"]),
+        value: z.string().nullable(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await setApiKey(input.provider, input.value);
+      return {
+        has_anthropic_key: await hasApiKey("anthropic"),
+        has_mistral_key: await hasApiKey("mistral"),
+      };
     }),
 });

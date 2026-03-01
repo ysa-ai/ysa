@@ -200,8 +200,8 @@ async function getOAuthToken(): Promise<string> {
 }
 
 async function getClaudeAuthEnv(): Promise<Record<string, string>> {
-  const { getConfig } = await import("../api/config-store");
-  const apiKey = getConfig().anthropic_api_key;
+  const { getApiKey } = await import("../api/keystore");
+  const apiKey = await getApiKey("anthropic");
   if (apiKey) {
     return { ANTHROPIC_API_KEY: apiKey };
   }
