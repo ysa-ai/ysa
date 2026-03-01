@@ -82,6 +82,12 @@ case "$MODE" in
     ;;
 esac
 
+# ── Host git identity ─────────────────────────────────────────────────
+GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-$(git config user.name 2>/dev/null || echo "Sandbox Agent")}"
+GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-$(git config user.email 2>/dev/null || echo "agent@sandbox")}"
+GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
+GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
+
 # ── Session volume ────────────────────────────────────────────────────
 SESSION_VOLUME="task-session-${TASK_ID}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
@@ -234,10 +240,10 @@ podman run --rm \
   ${EXTRA_POD_ENV:-} \
   -e ALLOWED_TOOLS="$ALLOWED_TOOLS_VALUE" \
   -e ENABLE_TOOL_SEARCH=false \
-  -e GIT_AUTHOR_NAME="Sandbox Agent" \
-  -e GIT_AUTHOR_EMAIL="agent@sandbox" \
-  -e GIT_COMMITTER_NAME="Sandbox Agent" \
-  -e GIT_COMMITTER_EMAIL="agent@sandbox" \
+  -e GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Sandbox Agent}" \
+  -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-agent@sandbox}" \
+  -e GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Sandbox Agent}" \
+  -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-agent@sandbox}" \
   -v "$WORKTREE:/workspace:rw" \
   -v "$REPO_MOUNT" \
   --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent" \
