@@ -315,31 +315,39 @@ function parseClaudeOutput(logContent: string, skipLinesBefore = 0): ParsedOutpu
   for (const line of relevantLines) {
     if (!line.trim()) continue;
 
+    let parsed: any;
     try {
-      const parsed = JSON.parse(line);
+      parsed = JSON.parse(line);
+    } catch {
+      // Not JSON — Claude CLI may emit plain-text errors (e.g. auth failures)
+      lastError = line.trim().slice(0, 300);
+      continue;
+    }
 
-      if (parsed.type === "system" && parsed.session_id) {
-        sessionId = parsed.session_id;
-      }
+    if (parsed.type === "system" && parsed.session_id) {
+      sessionId = parsed.session_id;
+    }
 
-      if (parsed.type === "result" && parsed.subtype === "error_max_turns") {
-        maxTurnsReached = true;
-      }
+    if (parsed.type === "result" && parsed.subtype === "error_max_turns") {
+      maxTurnsReached = true;
+    }
 
-      if (parsed.type === "assistant" && parsed.message?.content) {
-        for (const block of parsed.message.content) {
-          if (block.type === "text" && block.text) {
-            lastError = block.text.slice(0, 200);
-            const abortMatch = block.text.match(/\[TASK_ABORTED\]:\s*(.*)/);
-            if (abortMatch) {
-              agentAborted = true;
-              abortReason = abortMatch[1].trim().slice(0, 200);
-            }
+    // JSON error objects (e.g. {"type":"error","message":"..."})
+    if (parsed.type === "error" && parsed.message) {
+      lastError = String(parsed.message).slice(0, 300);
+    }
+
+    if (parsed.type === "assistant" && parsed.message?.content) {
+      for (const block of parsed.message.content) {
+        if (block.type === "text" && block.text) {
+          lastError = block.text.slice(0, 200);
+          const abortMatch = block.text.match(/\[TASK_ABORTED\]:\s*(.*)/);
+          if (abortMatch) {
+            agentAborted = true;
+            abortReason = abortMatch[1].trim().slice(0, 200);
           }
         }
       }
-    } catch {
-      // Not JSON — skip
     }
   }
 
