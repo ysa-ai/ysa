@@ -1,5 +1,6 @@
 {
   "enableAllProjectMcpServers": true,
+  "includeCoAuthoredBy": false,
   "permissions": {
     "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"]
   },
