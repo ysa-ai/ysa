@@ -147,11 +147,13 @@ fi
 
 # -- Log monitor (background -- watches for max_turns / result) ----------------
 MONITOR_PID=""
+SETTINGS_TMP=""
 cleanup_monitor() {
   if [ -n "$MONITOR_PID" ]; then
     kill "$MONITOR_PID" 2>/dev/null || true
     wait "$MONITOR_PID" 2>/dev/null || true
   fi
+  rm -f "${SETTINGS_TMP:-}"
 }
 trap cleanup_monitor EXIT
 
@@ -205,6 +207,22 @@ else
   fi
 fi
 
+# -- Generate read-only settings.json on host --------------------------------
+# settings.json is mounted :ro so the agent cannot modify the hook reference.
+# Claude Code does not write to settings.json during normal operation (confirmed).
+# ALLOWED_TOOLS injection is best-effort: if jq is unavailable, the --allowedTools
+# CLI flag already enforces restrictions and the injection is redundant.
+SETTINGS_TMP=$(mktemp)
+if [ -n "$ALLOWED_TOOLS_VALUE" ] && command -v jq >/dev/null 2>&1; then
+  TOOLS_JSON=$(echo "$ALLOWED_TOOLS_VALUE" | tr ',' '\n' | jq -R . | jq -s . 2>/dev/null || echo '[]')
+  jq --argjson t "$TOOLS_JSON" \
+    'if ($t | length) > 0 then .permissions.allow = $t else . end' \
+    "$SCRIPT_DIR/claude-settings.json" > "$SETTINGS_TMP" 2>/dev/null \
+    || cp "$SCRIPT_DIR/claude-settings.json" "$SETTINGS_TMP"
+else
+  cp "$SCRIPT_DIR/claude-settings.json" "$SETTINGS_TMP"
+fi
+
 progress "Starting container (network: $NETWORK_POLICY)..."
 
 # -- Launch container ----------------------------------------------------------
@@ -248,6 +266,7 @@ podman run --rm \
   -v "$WORKTREE:/workspace:rw" \
   -v "$REPO_MOUNT" \
   --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent" \
+  -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
   "$IMAGE" \
   -c "
     # Progress helper (JSON to stdout -> tee -> LOG_FILE)

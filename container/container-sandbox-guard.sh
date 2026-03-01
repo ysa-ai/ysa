@@ -93,6 +93,10 @@ case "$TOOL_NAME" in
       echo "BLOCKED: Copying .env files not allowed in sandbox (task ${CONTEXT_ID})" >&2
       exit 2
     fi
+    if echo "$COMMAND" | grep -Eq '(~/|/home/agent/)\.claude/(settings\.json|hooks/)'; then
+      echo "BLOCKED: Modifying Claude configuration is not allowed in sandbox (task ${CONTEXT_ID})" >&2
+      exit 2
+    fi
 
     exit 0
     ;;

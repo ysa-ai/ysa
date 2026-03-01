@@ -11,7 +11,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/agent/.claude/hooks/sandbox-guard.sh"
+            "command": "/etc/claude-defaults/hooks/sandbox-guard.sh"
           }
         ]
       }
