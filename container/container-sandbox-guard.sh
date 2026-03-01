@@ -61,7 +61,7 @@ case "$TOOL_NAME" in
       echo "BLOCKED: Destructive 'rm' command not allowed in sandbox (task ${CONTEXT_ID})" >&2
       exit 2
     fi
-    if echo "$COMMAND" | grep -Eq 'git\s+push\s+.*--force'; then
+    if echo "$COMMAND" | grep -Eq 'git\s+push\s+.*--force([^-]|$)'; then
       echo "BLOCKED: 'git push --force' not allowed in sandbox (task ${CONTEXT_ID})" >&2
       exit 2
     fi
