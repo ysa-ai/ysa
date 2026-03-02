@@ -280,12 +280,6 @@ podman run --rm \
       if [ ! -f /home/agent/.claude/settings.json ] && [ -f /etc/claude-defaults/settings.json ]; then
         cp /etc/claude-defaults/settings.json /home/agent/.claude/settings.json
       fi
-      if [ -n \"\${ALLOWED_TOOLS:-}\" ] && [ -f /home/agent/.claude/settings.json ]; then
-        TOOLS_JSON=\$(echo \"\$ALLOWED_TOOLS\" | tr ',' '\\n' | jq -R . | jq -s . 2>/dev/null || echo '[]')
-        if [ \"\$TOOLS_JSON\" != '[]' ]; then
-          jq --argjson t \"\$TOOLS_JSON\" '.permissions.allow = \$t' /home/agent/.claude/settings.json > /tmp/s.json 2>/dev/null && mv /tmp/s.json /home/agent/.claude/settings.json 2>/dev/null || true
-        fi
-      fi
       if [ -f /home/agent/.claude.json ]; then
         jq '.hasCompletedOnboarding = true | .projects[\"/workspace\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
       else

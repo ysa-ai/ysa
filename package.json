@@ -50,7 +50,7 @@
     "dev:server": "bun --hot src/server/index.ts",
     "dev:client": "bunx vite --host",
     "build": "bunx vite build",
-    "build:images": "bash container/generate-ca.sh container && podman build -t sandbox-claude -f container/Containerfile container/ && podman build -t sandbox-mistral -f container/Containerfile.mistral container/ && podman build -t sandbox-proxy -f container/Containerfile.proxy container/ && rm -f container/ca-key.pem container/ca.pem",
+    "build:images": "bash container/generate-ca.sh container && podman build -t sandbox-claude -f container/Containerfile container/ && podman build -t sandbox-mistral -f container/Containerfile.mistral container/ && podman build -t sandbox-proxy -f container/Containerfile.proxy container/ && rm -f container/ca-key.pem container/ca.pem && (podman rm -f ysa-proxy 2>/dev/null; podman image prune -f)",
     "prepublishOnly": "bun run build",
     "start": "bun src/server/index.ts",
     "typecheck": "tsc --noEmit"
