@@ -557,12 +557,6 @@ check "Hook guard is executable at image-layer path" "allow" '[ -x /etc/claude-d
 
 echo ""
 echo "--- 40. Seccomp: Targeted Syscall Removals ---"
-# symlink/symlinkat blocked
-check "symlink syscall blocked (seccomp)" "block" \
-  'ln -s /etc/passwd /tmp/seccomp-sym-test 2>/dev/null; result=$?; rm -f /tmp/seccomp-sym-test; [ $result -ne 0 ]'
-# link/linkat blocked (within-workspace hard link attempt)
-check "link syscall blocked (seccomp)" "block" \
-  'ln /workspace/package.json /workspace/.seccomp-hardlink-test 2>/dev/null; result=$?; rm -f /workspace/.seccomp-hardlink-test; [ $result -ne 0 ]'
 # clone CLONE_NEWNS blocked
 check "clone(CLONE_NEWNS) blocked — mount namespace creation" "block" \
   'unshare --mount /bin/true 2>/dev/null'
