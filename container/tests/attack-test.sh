@@ -565,6 +565,43 @@ check "vfork absent from seccomp allowlist" "allow" \
   '! grep -q "\"vfork\"" /workspace/container/seccomp.json'
 
 echo ""
+echo "--- 41. Git Config: Missing Blacklist Keys ---"
+
+# core.worktreeConfig injection: enable per-worktree config, plant a dangerous key there,
+# verify it does not execute
+rm -f /tmp/worktree-pwned 2>/dev/null
+mkdir -p /workspace/.git 2>/dev/null || true
+/usr/bin/git -C /workspace config --local core.worktreeConfig true 2>/dev/null || true
+printf '[core]\n\tpager = touch /tmp/worktree-pwned\n' > /workspace/.git/config.worktree 2>/dev/null || true
+git -C /workspace log --oneline -1 >/dev/null 2>&1 || true
+check "core.worktreeConfig injection — no side effect" "allow" '! [ -f /tmp/worktree-pwned ]'
+/usr/bin/git -C /workspace config --local --unset core.worktreeConfig 2>/dev/null || true
+rm -f /workspace/.git/config.worktree /tmp/worktree-pwned 2>/dev/null
+
+# init.templateDir injection: plant a malicious hook in a fake template dir,
+# set init.templateDir in local config, run git init in a temp dir, verify hook did not fire
+rm -f /tmp/template-pwned 2>/dev/null
+TMPDIR_INIT=$(mktemp -d /tmp/git-init-test-XXXXXX) 2>/dev/null || TMPDIR_INIT=/tmp/git-init-test-$$
+FAKE_TMPL=$(mktemp -d /tmp/git-template-XXXXXX) 2>/dev/null || FAKE_TMPL=/tmp/git-template-$$
+mkdir -p "$FAKE_TMPL/hooks"
+printf '#!/bin/bash\ntouch /tmp/template-pwned\n' > "$FAKE_TMPL/hooks/post-init" 2>/dev/null || true
+chmod +x "$FAKE_TMPL/hooks/post-init" 2>/dev/null || true
+/usr/bin/git -C /workspace config --local init.templateDir "$FAKE_TMPL" 2>/dev/null || true
+git init "$TMPDIR_INIT" >/dev/null 2>&1 || true
+check "init.templateDir injection — no side effect" "allow" '! [ -f /tmp/template-pwned ]'
+/usr/bin/git -C /workspace config --local --unset init.templateDir 2>/dev/null || true
+rm -rf "$TMPDIR_INIT" "$FAKE_TMPL" /tmp/template-pwned 2>/dev/null
+
+# submodule.<name>.update !cmd injection: set update = !cmd in local config,
+# run git submodule update, verify the command did not execute
+rm -f /tmp/submod-pwned 2>/dev/null
+/usr/bin/git -C /workspace config --local submodule.evil.update "!touch /tmp/submod-pwned" 2>/dev/null || true
+git -C /workspace submodule update >/dev/null 2>&1 || true
+check "submodule.evil.update !cmd injection — no side effect" "allow" '! [ -f /tmp/submod-pwned ]'
+/usr/bin/git -C /workspace config --local --unset submodule.evil.update 2>/dev/null || true
+rm -f /tmp/submod-pwned 2>/dev/null
+
+echo ""
 echo "=========================================="
 echo " RESULTS: $PASS passed, $FAIL failed out of $TESTS tests"
 echo "=========================================="

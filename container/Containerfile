@@ -85,7 +85,7 @@ USER agent
 # These take highest precedence (after -c flags) and cannot be overridden
 # by local config. The wrapper strips wildcard patterns; these handle exact keys.
 # Ref: https://git-scm.com/docs/git-config#ENVIRONMENT
-ENV GIT_CONFIG_COUNT=17 \
+ENV GIT_CONFIG_COUNT=20 \
     GIT_CONFIG_KEY_0=core.fsmonitor \
     GIT_CONFIG_VALUE_0=false \
     GIT_CONFIG_KEY_1=core.hooksPath \
@@ -119,7 +119,13 @@ ENV GIT_CONFIG_COUNT=17 \
     GIT_CONFIG_KEY_15=sequence.editor \
     GIT_CONFIG_VALUE_15=true \
     GIT_CONFIG_KEY_16=protocol.ext.allow \
-    GIT_CONFIG_VALUE_16=never
+    GIT_CONFIG_VALUE_16=never \
+    GIT_CONFIG_KEY_17=core.worktreeConfig \
+    GIT_CONFIG_VALUE_17=false \
+    GIT_CONFIG_KEY_18=init.templateDir \
+    GIT_CONFIG_VALUE_18= \
+    GIT_CONFIG_KEY_19=blame.ignoreRevsFile \
+    GIT_CONFIG_VALUE_19=/dev/null
 
 WORKDIR /workspace
 
