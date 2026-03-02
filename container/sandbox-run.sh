@@ -92,6 +92,12 @@ GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 SESSION_VOLUME="task-session-${TASK_ID}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
 
+# -- node_modules volume -------------------------------------------------------
+# Shadow the worktree's node_modules with a container-specific named volume so
+# the container installs Linux-native binaries there without touching the host copy.
+NODE_MODULES_VOLUME="node-modules-${TASK_ID}"
+podman volume exists "$NODE_MODULES_VOLUME" 2>/dev/null || podman volume create "$NODE_MODULES_VOLUME" >/dev/null
+
 # -- Git worktree pointer ------------------------------------------------------
 # Write container-internal git pointers from the host before container starts,
 # so the container sees the correct paths without needing write access to them.
@@ -264,6 +270,7 @@ podman run --rm \
   -e GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Sandbox Agent}" \
   -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-agent@sandbox}" \
   -v "$WORKTREE:/workspace:rw" \
+  --mount "type=volume,src=${NODE_MODULES_VOLUME},dst=/workspace/node_modules" \
   -v "$REPO_MOUNT" \
   --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent" \
   -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
