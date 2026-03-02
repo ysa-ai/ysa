@@ -32,7 +32,6 @@ interface StrictPolicy {
   rateLimitPerDomain: number; // req/min
   burstThreshold: number;     // max requests in 5s window
   outboundByteBudget: number; // bytes/min across URLs + headers
-  entropyThreshold: number;   // Shannon entropy — flag encoded data in URL (0-8, base64 ≈ 5.5+)
   bypassHosts: string[];
   scopedAllowRules: ScopedAllowRule[]; // MCP tool hosts — allow all methods for specific project paths
 }
@@ -79,7 +78,6 @@ const DEFAULT_POLICY: StrictPolicy = {
   rateLimitPerDomain: 30,
   burstThreshold: 10,
   outboundByteBudget: 51200, // 50KB/min
-  entropyThreshold: 4.0,     // normal URLs ~2.5-3.5, base64/hex ~4.3-6.0
   bypassHosts: [...BASE_BYPASS_HOSTS, ...providerBypassHosts],
   scopedAllowRules: [],
 };
@@ -163,26 +161,8 @@ const STANDARD_HEADERS = new Set([
   "range", "te", "upgrade-insecure-requests",
 ]);
 
-// Shannon entropy — measures randomness/density of information in a string.
-// Normal URL paths (e.g. /api/users/list) have entropy ~2.5-3.5.
-// Base64/hex-encoded data (e.g. /aGVsbG8gd29ybGQ=) has entropy ~4.5-6.0.
-// Used to detect data exfiltration encoded in URL paths.
-function shannonEntropy(s: string): number {
-  if (s.length === 0) return 0;
-  const freq = new Map<string, number>();
-  for (const ch of s) {
-    freq.set(ch, (freq.get(ch) ?? 0) + 1);
-  }
-  let entropy = 0;
-  for (const count of freq.values()) {
-    const p = count / s.length;
-    entropy -= p * Math.log2(p);
-  }
-  return entropy;
-}
-
 function inspectRequest(method: string, url: string, headers: Record<string, string>, hasBody: boolean, domain: string): { allowed: boolean; reason: string } {
-  // Parse URL early — needed for bypass port check and length/entropy checks
+  // Parse URL early — needed for bypass port check and length/pattern checks
   let urlPart = url;
   let urlPort: number | undefined;
   try {
@@ -214,31 +194,21 @@ function inspectRequest(method: string, url: string, headers: Record<string, str
     return { allowed: false, reason: `url_too_long: ${urlPart.length}/${policy.maxUrlLength}` };
   }
 
-  // Anomaly detection on URL path segments — catches data encoded in paths
-  // Strip query string first — only analyze the path, not query parameters
-  // (query params like ?ref=fix/9 have high-entropy chars like ? and = that cause false positives)
+  // Pattern detection on URL path segments — catches large encoded blobs in paths.
+  // Strip query string first — only analyze the path, not query parameters.
+  // URL-decode before checking so %2f-style encoding doesn't conceal patterns.
+  // Re-split after decoding: encoded slashes (e.g. user%2Frepo) decode to multi-part strings.
+  // Threshold at 48 chars: allows Git SHAs (40 hex), UUIDs (32 hex), long slugs, etc.
   const pathOnly = urlPart.split("?")[0];
-  // URL-decode first so %2f/%3d/%20 don't inflate entropy
-  // Re-split after decoding: encoded slashes (e.g. user%2Frepo) decode to
-  // multi-part strings — check each sub-part independently
   const segments = pathOnly.split("/").flatMap((s) => {
     try { return decodeURIComponent(s).split("/"); } catch { return [s]; }
-  }).filter((s) => s.length > 16);
+  }).filter((s) => s.length > 48);
   for (const seg of segments) {
-    // 1. Encoding pattern detection — base64 or hex strings are suspicious in URLs
-    // Threshold at 48 chars: normal URLs can have UUIDs (32 hex), long slugs, etc.
-    // 48 base64 chars = 36 bytes — enough headroom for legitimate IDs
-    if (seg.length > 48 && /^[A-Za-z0-9+/=]+$/.test(seg)) {
+    if (/^[A-Za-z0-9+/=]+$/.test(seg)) {
       return { allowed: false, reason: `base64_pattern: "${seg.slice(0, 30)}..." (${seg.length} chars)` };
     }
-    if (seg.length > 48 && /^[0-9a-fA-F]+$/.test(seg)) {
+    if (/^[0-9a-fA-F]+$/.test(seg)) {
       return { allowed: false, reason: `hex_pattern: "${seg.slice(0, 30)}..." (${seg.length} chars)` };
-    }
-
-    // 2. Shannon entropy — catches other high-density encoding schemes
-    const entropy = shannonEntropy(seg);
-    if (entropy > policy.entropyThreshold) {
-      return { allowed: false, reason: `high_entropy_url: ${entropy.toFixed(2)} in "${seg.slice(0, 30)}..."` };
     }
   }
 

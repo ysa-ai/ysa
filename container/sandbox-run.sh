@@ -278,15 +278,12 @@ podman run --rm \
       eval \"\$AGENT_INIT_SCRIPT\"
     else
       if [ ! -f /home/agent/.claude/settings.json ] && [ -f /etc/claude-defaults/settings.json ]; then
-        mkdir -p /home/agent/.claude/hooks
         cp /etc/claude-defaults/settings.json /home/agent/.claude/settings.json
-        cp /etc/claude-defaults/hooks/sandbox-guard.sh /home/agent/.claude/hooks/sandbox-guard.sh 2>/dev/null
-        chmod +x /home/agent/.claude/hooks/sandbox-guard.sh 2>/dev/null
       fi
       if [ -n \"\${ALLOWED_TOOLS:-}\" ] && [ -f /home/agent/.claude/settings.json ]; then
         TOOLS_JSON=\$(echo \"\$ALLOWED_TOOLS\" | tr ',' '\\n' | jq -R . | jq -s . 2>/dev/null || echo '[]')
         if [ \"\$TOOLS_JSON\" != '[]' ]; then
-          jq --argjson t \"\$TOOLS_JSON\" '.permissions.allow = \$t' /home/agent/.claude/settings.json > /tmp/s.json 2>/dev/null && mv /tmp/s.json /home/agent/.claude/settings.json
+          jq --argjson t \"\$TOOLS_JSON\" '.permissions.allow = \$t' /home/agent/.claude/settings.json > /tmp/s.json 2>/dev/null && mv /tmp/s.json /home/agent/.claude/settings.json 2>/dev/null || true
         fi
       fi
       if [ -f /home/agent/.claude.json ]; then
