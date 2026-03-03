@@ -24,7 +24,7 @@ Each task gets its own git worktree and rootless Podman container. Agents work i
 
 - **Parallel execution** — run multiple agents simultaneously, each in its own container and git worktree
 - **Hardened sandbox** — rootless Podman with defense-in-depth (see [Container security](#container-security))
-- **Network policy** — optional L7 MITM proxy + L3/L4 iptables enforcement to control outbound traffic
+- **Network policy** — optional outbound traffic control with a local proxy and firewall enforcement
 - **Multi-provider** — Claude Code and Mistral out of the box, extensible adapter interface
 - **Self-hosted models** — local/self-hosted model support coming soon
 - **Web UI + CLI** — browser dashboard and `ysa` CLI, both talking to the same local server
@@ -83,7 +83,7 @@ ysa teardown               # Remove all worktrees and containers
 Two modes:
 
 - **Unrestricted** — full internet access inside the container
-- **Restricted** — all traffic routed through a local MITM proxy. GET-only, no request body, entropy detection on paths (catches base64/hex exfiltration), rate limits, outbound byte budget. Enforced at both L7 (proxy inspection) and L3/L4 (iptables in the container network namespace).
+- **Restricted** — all traffic routed through a local MITM proxy. GET-only, no request body, entropy detection on paths (catches base64/hex exfiltration), rate limits, outbound byte budget. Enforced at both the proxy and firewall level inside the container network namespace.
 
 ---
 
@@ -114,7 +114,7 @@ bash container/tests/security-test.sh --skip-network
 ```
 
 - **`attack-test.sh`** — 155 tests across 38 attack categories: privilege escalation, filesystem escapes, git hook injection, credential theft, signal abuse, and more. Runs inside the container.
-- **`network-proxy-test.sh`** — 60 tests for the MITM proxy and iptables enforcement: exfiltration attempts, method bypasses, entropy detection, L3/L4 rule verification.
+- **`network-proxy-test.sh`** — 60 tests for the MITM proxy and firewall enforcement: exfiltration attempts, method bypasses, entropy detection, rule verification.
 
 ---
 
