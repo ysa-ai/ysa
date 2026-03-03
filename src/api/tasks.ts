@@ -4,6 +4,7 @@ import { getDb, schema } from "../db";
 import { eq, desc } from "drizzle-orm";
 import { readFile, stat, appendFile } from "fs/promises";
 import { join } from "path";
+import { homedir } from "os";
 import { getProvider } from "../providers";
 import type { ParsedLogEntry } from "../types";
 
@@ -84,13 +85,7 @@ async function scrapeProxyLogs(taskId: string, logPath: string): Promise<void> {
   }
 }
 
-async function getProxyLogs(taskId: string, logPath: string): Promise<ParsedLogEntry[]> {
-  await scrapeProxyLogs(taskId, logPath);
-
-  const netLog = networkLogPath(logPath);
-  if (!(await fileExists(netLog))) return [];
-
-  const raw = await readFile(netLog, "utf-8");
+function parseProxyLogLines(raw: string): ParsedLogEntry[] {
   return raw
     .split("\n")
     .filter((line) => line.trim())
@@ -108,6 +103,22 @@ async function getProxyLogs(taskId: string, logPath: string): Promise<ParsedLogE
         ts,
       };
     });
+}
+
+async function getProxyLogs(taskId: string, logPath: string): Promise<ParsedLogEntry[]> {
+  // Read directly from the bind-mounted per-task proxy log file.
+  // The proxy writes to /proxy-logs/{taskId}.log inside the container,
+  // which is bind-mounted from $HOME/.ysa/proxy-logs/ on the host.
+  const proxyLogFile = join(homedir(), ".ysa", "proxy-logs", `${taskId}.log`);
+  if (await fileExists(proxyLogFile)) {
+    return parseProxyLogLines(await readFile(proxyLogFile, "utf-8"));
+  }
+
+  // Fallback: legacy scraping via podman logs (used when bind mount isn't available)
+  await scrapeProxyLogs(taskId, logPath);
+  const netLog = networkLogPath(logPath);
+  if (!(await fileExists(netLog))) return [];
+  return parseProxyLogLines(await readFile(netLog, "utf-8"));
 }
 
 export const tasksRouter = router({
