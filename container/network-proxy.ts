@@ -504,7 +504,7 @@ async function createMitmConnection(
   clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 
   const localConn = new Socket();
-  localConn.connect(mitmServer.port, "127.0.0.1", () => {
+  localConn.connect(mitmServer.port!, "127.0.0.1", () => {
     localConn.pipe(clientSocket);
     clientSocket.pipe(localConn);
   });
