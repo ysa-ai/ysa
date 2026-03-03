@@ -39,7 +39,7 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 export function shellescape(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}''`;
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 const RESULT_SUFFIX = `
