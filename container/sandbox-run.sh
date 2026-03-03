@@ -296,9 +296,9 @@ podman run --rm \
 
     AGENT_BIN=\"\${AGENT_BINARY:-claude}\"
 
-    # Prompt handling: --resume or -p means args are self-contained, otherwise fetch from PROMPT_URL
+    # Prompt handling: -p means args are self-contained; --resume without -p fetches prompt from PROMPT_URL
     case \"$QUOTED_ARGS\" in
-      *--resume*|*-p\ *)
+      *-p\ *)
         _progress 'Starting agent...'
         \$AGENT_BIN $QUOTED_ARGS
         ;;
