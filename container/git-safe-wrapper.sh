@@ -24,6 +24,10 @@
 #   url.*.insteadOf               — URL rewriting (can redirect to ext:: transport)
 #   sendemail.smtpServer          — sendmail program execution
 #   protocol.ext.allow            — ext:: transport command execution
+#   core.worktreeConfig           — loads per-worktree config that bypasses sanitization
+#   init.templateDir              — hooks in template dir run on git init/clone
+#   submodule.<name>.update       — accepts !<command> for arbitrary shell execution
+#   blame.ignoreRevsFile          — loads an arbitrary file path
 
 REAL_GIT=/usr/bin/git
 
@@ -42,8 +46,8 @@ work_dir="${target_dir:-.}"
 
 # Dangerous config key patterns (regex for grep -E)
 # These are keys whose VALUES are executed as shell commands by git
-DANGEROUS_EXACT_KEYS="core\.pager|core\.editor|core\.sshCommand|core\.askPass|core\.gitProxy|diff\.external|sequence\.editor|interactive\.diffFilter|gpg\.program|sendemail\.smtpServer"
-DANGEROUS_WILDCARD_KEYS="filter\.[^.]+\.(clean|smudge|process)|diff\.[^.]+\.(textconv|command)|merge\.[^.]+\.driver|pager\.[^.]+|gpg\.[^.]+\.program|trailer\.[^.]+\.(command|cmd)|include\.path|includeif\.[^.]+\.path|url\.[^.]+\.(insteadof|pushinsteadof)"
+DANGEROUS_EXACT_KEYS="core\.pager|core\.editor|core\.sshCommand|core\.askPass|core\.gitProxy|diff\.external|sequence\.editor|interactive\.diffFilter|gpg\.program|sendemail\.smtpServer|core\.worktreeConfig|init\.templateDir|blame\.ignoreRevsFile"
+DANGEROUS_WILDCARD_KEYS="filter\.[^.]+\.(clean|smudge|process)|diff\.[^.]+\.(textconv|command)|merge\.[^.]+\.driver|pager\.[^.]+|gpg\.[^.]+\.program|trailer\.[^.]+\.(command|cmd)|include\.path|includeif\.[^.]+\.path|url\.[^.]+\.(insteadof|pushinsteadof)|submodule\.[^.]+\.update"
 
 # Strip dangerous configs from ALL config locations
 # --git-common-dir gives the shared config (important for worktrees)
