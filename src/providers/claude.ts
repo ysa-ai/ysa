@@ -397,10 +397,10 @@ function buildClaudeCommand(opts: CommandOpts): string[] {
   const args: string[] = [];
 
   if (opts.resumeSessionId) {
-    args.push(
-      "--resume", opts.resumeSessionId,
-      "-p", opts.resumePrompt ?? "Continue from where you left off. Complete the remaining tasks.",
-    );
+    args.push("--resume", opts.resumeSessionId);
+    if (!opts.usePromptUrl) {
+      args.push("-p", opts.resumePrompt ?? "Continue from where you left off. Complete the remaining tasks.");
+    }
   } else if (!opts.usePromptUrl && opts.prompt) {
     args.push("-p", opts.prompt);
   }

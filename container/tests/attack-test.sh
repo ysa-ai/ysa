@@ -221,8 +221,9 @@ echo "--- 14. Symlink Escape Attempts ---"
 # Symlink from workspace to sensitive host paths
 check "Symlink to /etc/shadow from workspace" "block" 'ln -sf /etc/shadow /workspace/.shadow-escape 2>/dev/null && cat /workspace/.shadow-escape'
 rm -f /workspace/.shadow-escape 2>/dev/null
-# symlink syscall is blocked by seccomp; ln -sf will fail with EPERM
-check "Symlink creation blocked by seccomp" "block" 'ln -sf /proc/1/environ /workspace/.proc-escape 2>/dev/null'
+# symlink (old syscall) is absent from the allowlist; symlinkat is allowed for workspace use.
+# Verify the actual security guarantee: writing through a symlink to a read-only host path fails.
+check "Cannot write to host filesystem via symlink" "block" 'ln -sf /etc/passwd /workspace/.etc-symlink 2>/dev/null && echo pwned >> /workspace/.etc-symlink 2>/dev/null; ret=$?; rm -f /workspace/.etc-symlink 2>/dev/null; exit $ret'
 # Path traversal outside workspace via symlink
 check "Cannot traverse to host /etc via symlinks" "block" 'ln -sf /etc/hostname /workspace/.host-escape 2>/dev/null && cat /workspace/.host-escape | grep -v "^[a-f0-9]" | head -1'
 rm -f /workspace/.host-escape 2>/dev/null
