@@ -9,7 +9,7 @@
  * Env: PROXY_POLICY (JSON) — defaults to strict policy.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, openSync, writeSync, closeSync } from "fs";
 import { createServer as createNetServer, Socket } from "net";
 import { spawn } from "child_process";
 
@@ -112,6 +112,15 @@ interface DomainCounters {
 
 const domainCounters = new Map<string, DomainCounters>();
 
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, c] of domainCounters) {
+    if (now - c.minuteStart > 120_000 && now - c.burstStart > 120_000) {
+      domainCounters.delete(key);
+    }
+  }
+}, 60_000);
+
 function getCounters(domain: string): DomainCounters {
   let c = domainCounters.get(domain);
   const now = Date.now();
@@ -133,8 +142,9 @@ function getCounters(domain: string): DomainCounters {
   return c;
 }
 
-function checkRateLimits(domain: string, pathLength: number, headerBytes: number): string | null {
-  const c = getCounters(domain);
+function checkRateLimits(domain: string, pathLength: number, headerBytes: number, taskId: string): string | null {
+  const key = `${taskId || "_shared"}:${domain}`;
+  const c = getCounters(key);
   c.minuteCount++;
   c.burstCount++;
   c.outboundBytes += pathLength + headerBytes;
@@ -161,7 +171,7 @@ const STANDARD_HEADERS = new Set([
   "range", "te", "upgrade-insecure-requests",
 ]);
 
-function inspectRequest(method: string, url: string, headers: Record<string, string>, hasBody: boolean, domain: string): { allowed: boolean; reason: string } {
+function inspectRequest(method: string, url: string, headers: Record<string, string>, hasBody: boolean, domain: string, taskId = ""): { allowed: boolean; reason: string } {
   // Parse URL early — needed for bypass port check and length/pattern checks
   let urlPart = url;
   let urlPort: number | undefined;
@@ -227,7 +237,7 @@ function inspectRequest(method: string, url: string, headers: Record<string, str
   }
 
   // Rate limits + outbound byte budget
-  const rateResult = checkRateLimits(domain, urlPart.length, headerSize);
+  const rateResult = checkRateLimits(domain, urlPart.length, headerSize, taskId);
   if (rateResult) {
     return { allowed: false, reason: rateResult };
   }
@@ -247,10 +257,24 @@ function extractTaskId(headers: Record<string, string>): string {
   }
 }
 
+const LOG_DIR = "/proxy-logs";
+
+function appendToTaskLog(taskId: string, line: string) {
+  try {
+    const fd = openSync(`${LOG_DIR}/${taskId}.log`, "a", 0o600);
+    writeSync(fd, line);
+    closeSync(fd);
+  } catch {}
+}
+
 function log(action: "ALLOW" | "BLOCK", method: string, target: string, reason: string, taskId?: string) {
   const ts = new Date().toISOString();
-  const tag = taskId ? ` [${taskId}]` : "";
-  console.log(`[${ts}]${tag} [${action}] ${method} ${target} ${reason}`);
+  const line = `[${ts}] [${action}] ${method} ${target} ${reason}\n`;
+  if (taskId) {
+    appendToTaskLog(taskId, line);
+  } else {
+    console.log(line.trimEnd());
+  }
 }
 
 // ── Dynamic cert generation ─────────────────────────────────────────────────
@@ -356,7 +380,7 @@ function handleHttpRequest(clientSocket: Socket, data: Buffer) {
   const hasBody = (parseInt(parsed.headers["content-length"] ?? "0") > 0) ||
     parsed.headers["transfer-encoding"] === "chunked";
   const cleanHeaders = stripNonStandardHeaders(parsed.headers);
-  const result = inspectRequest(method, url, cleanHeaders, hasBody, domain);
+  const result = inspectRequest(method, url, cleanHeaders, hasBody, domain, taskId);
 
   if (!result.allowed) {
     log("BLOCK", method, logTarget, result.reason, taskId);
@@ -400,30 +424,31 @@ function handleHttpRequest(clientSocket: Socket, data: Buffer) {
 
 // ── HTTPS CONNECT handler ───────────────────────────────────────────────────
 
-// Map of active MITM TLS listeners keyed by hostname
-const mitmListeners = new Map<string, { port: number; server: any }>();
-// Track last task ID per hostname for MITM inner request logging
-const hostTaskIds = new Map<string, string>();
-
-async function getOrCreateMitmListener(hostname: string, upstreamPort: number): Promise<number> {
-  const existing = mitmListeners.get(hostname);
-  if (existing) return existing.port;
-
-  const hostCert = await generateCertForHost(hostname);
+async function createMitmConnection(
+  clientSocket: Socket,
+  hostname: string,
+  upstreamPort: number,
+  taskId: string,
+): Promise<void> {
+  let hostCert: { cert: string; key: string };
+  try {
+    hostCert = await generateCertForHost(hostname);
+  } catch (err: any) {
+    log("BLOCK", "CONNECT", `${hostname}:${upstreamPort}`, `mitm_error: ${err.message}`, taskId);
+    clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    clientSocket.destroy();
+    return;
+  }
 
   const mitmServer = Bun.serve({
-    port: 0, // random available port
+    port: 0,
     hostname: "127.0.0.1",
-    tls: {
-      cert: hostCert.cert,
-      key: hostCert.key,
-    },
+    tls: { cert: hostCert.cert, key: hostCert.key },
     async fetch(req) {
       const url = new URL(req.url);
       const method = req.method;
       const path = url.pathname + url.search;
       const fullUrl = `https://${hostname}${path}`;
-      const tid = hostTaskIds.get(hostname) ?? "";
 
       const headers: Record<string, string> = {};
       req.headers.forEach((v, k) => { headers[k] = v; });
@@ -431,14 +456,16 @@ async function getOrCreateMitmListener(hostname: string, upstreamPort: number): 
 
       const hasBody = (parseInt(headers["content-length"] ?? "0") > 0) ||
         headers["transfer-encoding"] === "chunked";
-      const result = inspectRequest(method, fullUrl, cleanHeaders, hasBody, hostname);
+
+      // taskId is captured in closure — always correct for this connection
+      const result = inspectRequest(method, fullUrl, cleanHeaders, hasBody, hostname, taskId);
 
       if (!result.allowed) {
-        log("BLOCK", method, `${hostname}${path}`, result.reason, tid);
+        log("BLOCK", method, `${hostname}${path}`, result.reason, taskId);
         return new Response(`Blocked by network policy: ${result.reason}\n`, { status: 403 });
       }
 
-      log("ALLOW", method, `${hostname}${path}`, result.reason, tid);
+      log("ALLOW", method, `${hostname}${path}`, result.reason, taskId);
 
       // Forward to actual upstream
       try {
@@ -468,15 +495,25 @@ async function getOrCreateMitmListener(hostname: string, upstreamPort: number): 
           headers: respHeaders,
         });
       } catch (err: any) {
-        log("BLOCK", method, `${hostname}${path}`, `upstream_error: ${err.message}`, tid);
+        log("BLOCK", method, `${hostname}${path}`, `upstream_error: ${err.message}`, taskId);
         return new Response(`Proxy error: ${err.message}\n`, { status: 502 });
       }
     },
   });
 
-  const port = mitmServer.port!;
-  mitmListeners.set(hostname, { port, server: mitmServer });
-  return port;
+  clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+
+  const localConn = new Socket();
+  localConn.connect(mitmServer.port, "127.0.0.1", () => {
+    localConn.pipe(clientSocket);
+    clientSocket.pipe(localConn);
+  });
+
+  const cleanup = () => { try { mitmServer.stop(true); } catch {} };
+  localConn.on("close", cleanup);
+  clientSocket.on("close", cleanup);
+  localConn.on("error", () => clientSocket.destroy());
+  clientSocket.on("error", () => localConn.destroy());
 }
 
 async function handleConnect(clientSocket: Socket, hostname: string, upstreamPort: number, taskId: string) {
@@ -494,30 +531,8 @@ async function handleConnect(clientSocket: Socket, hostname: string, upstreamPor
     return;
   }
 
-  // Store task ID for this hostname so MITM inner requests can log it
-  if (taskId) hostTaskIds.set(hostname, taskId);
-
-  // Get or create a MITM TLS listener for this hostname
-  let localPort: number;
-  try {
-    localPort = await getOrCreateMitmListener(hostname, upstreamPort);
-  } catch (err: any) {
-    log("BLOCK", "CONNECT", `${hostname}:${upstreamPort}`, `mitm_error: ${err.message}`, taskId);
-    clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
-    clientSocket.destroy();
-    return;
-  }
-
-  // Tell client the tunnel is established, then pipe to local MITM server
-  clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-
-  const localConn = new Socket();
-  localConn.connect(localPort, "127.0.0.1", () => {
-    localConn.pipe(clientSocket);
-    clientSocket.pipe(localConn);
-  });
-  localConn.on("error", () => clientSocket.destroy());
-  clientSocket.on("error", () => localConn.destroy());
+  // Create a per-connection MITM server with taskId captured in closure
+  await createMitmConnection(clientSocket, hostname, upstreamPort, taskId);
 }
 
 // ── Main server (raw TCP) ───────────────────────────────────────────────────

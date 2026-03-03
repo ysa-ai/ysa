@@ -56,6 +56,9 @@ export async function isProxyRunning(): Promise<boolean> {
 export async function startProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: string[]): Promise<void> {
   if (await isProxyRunning()) return;
 
+  // Ensure per-task log directory exists on the host
+  await runShell(`mkdir -p $HOME/.ysa/proxy-logs && chmod 0700 $HOME/.ysa/proxy-logs`);
+
   // Clean up any stopped container with the same name or any container holding our port
   await runShell(`podman rm -f ${PROXY_CONTAINER_NAME} 2>/dev/null || true`);
   const { stdout: portUsers } = await runShell(
@@ -90,6 +93,7 @@ export async function startProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: 
       --pids-limit 128 \
       --cpus 1 \
       -p ${PROXY_PORT}:${PROXY_PORT} \
+      -v $HOME/.ysa/proxy-logs/:/proxy-logs/:rw \
       ${policyEnv} \
       ${IMAGE}`,
   );
