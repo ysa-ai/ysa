@@ -4,7 +4,9 @@ Run AI coding agents in parallel inside hardened, isolated containers — with f
 
 Each task gets its own git worktree and rootless Podman container. Agents work in complete isolation from each other and from your host system.
 
-![Architecture](./docs/architecture.svg)
+![Architecture](./docs/architecture-overview.svg)
+
+> [Detailed architecture diagram](./docs/architecture.svg)
 
 ---
 
