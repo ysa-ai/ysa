@@ -500,6 +500,14 @@ export const taskActionsRouter = router({
         await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...getProvider(task.provider ?? "claude").bypassHosts, ...extraBypass], serverConfig.port);
       }
 
+      // Store refine prompt for container to fetch (avoids shell quoting issues with complex text)
+      await fetch(`http://localhost:${serverConfig.port}/api/prompt/${input.taskId}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getOrCreateAuthToken()}` },
+        body: wrapRefinePrompt(input.prompt),
+      });
+      const promptUrl = `http://host.containers.internal:${serverConfig.port}/api/prompt/${input.taskId}`;
+
       const config: RunConfig = {
         taskId: input.taskId,
         prompt: task.prompt,
@@ -509,7 +517,7 @@ export const taskActionsRouter = router({
         provider: task.provider ?? "claude",
         model: task.model ?? undefined,
         resumeSessionId: task.session_id,
-        resumePrompt: wrapRefinePrompt(input.prompt),
+        promptUrl,
         networkPolicy: refineNetworkPolicy,
       };
 
@@ -684,9 +692,9 @@ podman run --rm -it \\
       chmod +x /home/agent/.claude/hooks/sandbox-guard.sh 2>/dev/null
     fi
     if [ -f /home/agent/.claude.json ]; then
-      jq '.hasCompletedOnboarding = true | .projects[\\\\"/workspace\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
+      jq '.hasCompletedOnboarding = true | .projects[\\\\\"/workspace\\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
     else
-      echo '{\\\"hasCompletedOnboarding\\\":true,\\\"projects\\\":{\\\"\/workspace\\\":{\\\"hasTrustDialogAccepted\\\":true}}}' > /home/agent/.claude.json
+      echo '{\\\"hasCompletedOnboarding\\\":true,\\\"projects\\\":{\\\"\\/workspace\\\":{\\\"hasTrustDialogAccepted\\\":true}}}' > /home/agent/.claude.json
     fi
 
     echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git
