@@ -39,45 +39,7 @@ describe("openTerminal launcher script token handling", () => {
     const proxyEnv = "";
 
     // Replicate the template logic from openTerminal
-    const launcherScript = `#!/bin/bash
-set -euo pipefail
-
-# Load credentials and remove the file immediately
-# shellcheck source=/dev/null
-source ${shellescape(tokenEnvPath)}
-rm -f ${shellescape(tokenEnvPath)}
-
-echo -e "\\033[90mStarting sandbox for task ${taskId.slice(0, 8)}...\\033[0m"
-podman rm -f "refine-${taskId}" 2>/dev/null || true
-podman run --rm -it \\
-  --name "refine-${taskId}" \\
-  --user 1001:1001 \\
-  --network slirp4netns \\
-  --add-host host.containers.internal:host-gateway \\
-  --cap-drop ALL \\
-  --security-opt no-new-privileges \\
-  --security-opt seccomp=${shellescape(SECCOMP_PROFILE)} \\
-  --read-only \\
-  --tmpfs /tmp:rw,nosuid,size=256m \\
-  --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \\
-  --memory 4g \\
-  --pids-limit 512 \\
-  --cpus 2 \\
-  -e CLAUDE_CODE_OAUTH_TOKEN \\
-  ${proxyEnv} \\
-  -v ${shellescape(worktree)}:/workspace:rw \\
-  -v ${shellescape(gitDir)}:/repo.git:rw \\
-  --mount "type=volume,src=${sessionVolume},dst=/home/agent" \\
-  sandbox-claude \\
-  -c "
-    echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git
-    claude ${resumeFlag} --add-dir /workspace --dangerously-skip-permissions
-  "
-
-# Restore host worktree pointer
-echo "gitdir: ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}" > ${shellescape(worktree)}/.git
-echo ${shellescape(worktree)}/.git > ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}/gitdir
-`;
+    const launcherScript = `#!/bin/bash\nset -euo pipefail\n\n# Load credentials and remove the file immediately\n# shellcheck source=/dev/null\nsource ${shellescape(tokenEnvPath)}\nrm -f ${shellescape(tokenEnvPath)}\n\necho -e "\\033[90mStarting sandbox for task ${taskId.slice(0, 8)}...\\033[0m"\npodman rm -f "refine-${taskId}" 2>/dev/null || true\npodman run --rm -it \\\n  --name "refine-${taskId}" \\\n  --user 1001:1001 \\\n  --network slirp4netns \\\n  --add-host host.containers.internal:host-gateway \\\n  --cap-drop ALL \\\n  --security-opt no-new-privileges \\\n  --security-opt seccomp=${shellescape(SECCOMP_PROFILE)} \\\n  --read-only \\\n  --tmpfs /tmp:rw,nosuid,size=256m \\\n  --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \\\n  --memory 4g \\\n  --pids-limit 512 \\\n  --cpus 2 \\\n  -e CLAUDE_CODE_OAUTH_TOKEN \\\n  ${proxyEnv} \\\n  -v ${shellescape(worktree)}:/workspace:rw \\\n  -v ${shellescape(gitDir)}:/repo.git:rw \\\n  --tmpfs /home/agent:rw,nosuid,nodev,size=256m \\\n  --mount "type=volume,src=${sessionVolume},dst=/home/agent/.claude" \\\n  sandbox-claude \\\n  -c "\n    echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git\n    claude ${resumeFlag} --add-dir /workspace --dangerously-skip-permissions\n  "\n\n# Restore host worktree pointer\necho "gitdir: ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}" > ${shellescape(worktree)}/.git\necho ${shellescape(worktree)}/.git > ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}/gitdir\n`;
 
     // The raw token must NOT appear anywhere in the script
     expect(launcherScript).not.toContain(mockToken);
@@ -88,5 +50,12 @@ echo ${shellescape(worktree)}/.git > ${shellescape(gitDir)}/worktrees/${shellesc
     // The script must contain -e CLAUDE_CODE_OAUTH_TOKEN without an inline =value assignment
     expect(launcherScript).toContain("-e CLAUDE_CODE_OAUTH_TOKEN");
     expect(launcherScript).not.toContain(`-e CLAUDE_CODE_OAUTH_TOKEN=`);
+
+    // ut-2: home directory uses tmpfs; session volume mounts only at .claude subdirectory
+    expect(launcherScript).toContain("--tmpfs /home/agent");
+    expect(launcherScript).toContain(`dst=/home/agent/.claude`);
+    // Session volume must NOT be mounted as the full home directory
+    expect(launcherScript).not.toMatch(/type=volume,src=task-session-[^,]+,dst=\/home\/agent["\\]/);
+    expect(launcherScript).not.toContain(`,dst=/home/agent"`);
   });
 });
