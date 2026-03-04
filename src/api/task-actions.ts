@@ -4,7 +4,6 @@ import { getDb, schema } from "../db";
 import { eq } from "drizzle-orm";
 import { writeFile, readFile, stat, unlink, mkdir } from "fs/promises";
 import { join } from "path";
-import { homedir } from "os";
 import { runTask } from "../runtime/runner";
 import { stopContainer, teardownContainer, SECCOMP_PROFILE } from "../runtime/container";
 import { removeWorktree } from "../runtime/worktree";
@@ -634,7 +633,7 @@ export const taskActionsRouter = router({
         await ensureProxy(scopedRules.length > 0 ? scopedRules : undefined, [...taskAdapter.bypassHosts, ...extraBypass], serverConfig.port);
       }
 
-      const launchersDir = join(homedir(), ".ysa", "launchers");
+      const launchersDir = join(serverConfig.projectRoot, ".ysa", "launchers");
       await mkdir(launchersDir, { recursive: true, mode: 0o700 });
 
       const launcherPath = join(launchersDir, `claude-refine-${input.taskId}.sh`);
@@ -654,7 +653,7 @@ echo -e "\\033[90mStarting sandbox for task ${input.taskId.slice(0, 8)}...\\033[
 podman rm -f "refine-${input.taskId}" 2>/dev/null || true
 podman run --rm -it \\
   --name "refine-${input.taskId}" \\
-  --user 1001:1001 \\
+  --user 1000:1001 \\
   --network slirp4netns \\
   --add-host host.containers.internal:host-gateway \\
   --cap-drop ALL \\
