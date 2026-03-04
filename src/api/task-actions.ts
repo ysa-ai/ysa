@@ -639,7 +639,7 @@ export const taskActionsRouter = router({
       const launcherPath = join(launchersDir, `claude-refine-${input.taskId}.sh`);
       const tokenEnvPath = join(launchersDir, `token-${input.taskId}.env`);
 
-      await writeFile(tokenEnvPath, `CLAUDE_CODE_OAUTH_TOKEN=${shellescape(oauthToken)}\n`, { mode: 0o600 });
+      await writeFile(tokenEnvPath, `export CLAUDE_CODE_OAUTH_TOKEN=${shellescape(oauthToken)}\n`, { mode: 0o600 });
 
       const launcherScript = `#!/bin/bash
 set -euo pipefail
