@@ -478,6 +478,10 @@ function handleHttpRequest(clientSocket: Socket, data: Buffer) {
 
   const upstreamPort = parseInt(parsedUrl.port) || 80;
   const upstream = new Socket();
+  // Force connection close so each HTTP request requires a new TCP connection.
+  // Without this, keep-alive connections pipe subsequent requests directly,
+  // bypassing handleHttpRequest and all policy/rate-limit checks entirely.
+  cleanHeaders["connection"] = "close";
   upstream.connect(upstreamPort, parsedUrl.hostname, () => {
     // Rewrite the request line to use path-only (not absolute URL)
     const reqLine = `${method} ${parsedUrl.pathname}${parsedUrl.search} HTTP/1.1\r\n`;
