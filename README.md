@@ -1,8 +1,12 @@
 # Your Secure Agent
 
-Run AI coding agents in parallel inside hardened, isolated containers — with full control over what they can access and where the data goes.
+**ysa is a container runtime and local dashboard for running AI coding agents safely on your machine.**
 
-Each task gets its own git worktree and rootless Podman container. Agents work in complete isolation from each other and from your host system.
+You get two things out of the box:
+- **A secure container runtime** — every agent runs in an isolated, rootless Podman container with a hardened sandbox, its own git worktree, and optional network policy enforcement
+- **A local web dashboard + CLI** — a simple UI to launch tasks, monitor logs, review results, and manage parallel agent sessions
+
+No cloud, no telemetry, no data leaving your machine. Run multiple agents in parallel on the same codebase, each on its own branch, each fully isolated from each other and from your host system.
 
 <p align="center"><img src="./docs/architecture-overview.svg" width="600" /></p>
 
