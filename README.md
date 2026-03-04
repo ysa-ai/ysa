@@ -1,5 +1,7 @@
 # Your Secure Agent
 
+> **Early development** — this repo is under active development. Expect breaking changes between releases.
+
 **ysa is a container runtime and local dashboard for running AI coding agents safely on your machine.**
 
 You get two things out of the box:
@@ -87,7 +89,7 @@ ysa teardown               # Remove all worktrees and containers
 Two modes:
 
 - **Unrestricted** — full internet access inside the container
-- **Restricted** — all traffic routed through a local MITM proxy. GET-only, no request body, entropy detection on paths (catches base64/hex exfiltration), rate limits, outbound byte budget. Enforced at both the proxy and firewall level inside the container network namespace.
+- **Restricted** — all traffic routed through a local MITM proxy. GET-only, no request body, rate limits, outbound byte budget. Enforced at both the proxy and firewall level inside the container network namespace.
 
 ---
 
@@ -99,7 +101,7 @@ Every container runs directly on the host kernel via rootless Podman — no virt
 - `--read-only` — immutable root filesystem; the agent cannot modify system files
 - `--security-opt no-new-privileges` — prevents any process inside from gaining elevated privileges
 - `--security-opt seccomp=...` — syscall whitelist (~190 allowed out of ~400+); blocks `clone3`, memfd tricks, and other escalation paths
-- `--tmpfs /tmp` — writable scratch space is in-memory only, non-executable
+- `--tmpfs /tmp` — writable scratch space is in-memory only
 - `--memory 4g --cpus 2 --pids-limit 512` — hard resource limits per container
 - Rootless Podman — the container daemon itself runs as an unprivileged user; no process has root on the host at any point
 
@@ -118,7 +120,7 @@ bash container/tests/security-test.sh --skip-network
 ```
 
 - **`attack-test.sh`** — 155 tests across 38 attack categories: privilege escalation, filesystem escapes, git hook injection, credential theft, signal abuse, and more. Runs inside the container.
-- **`network-proxy-test.sh`** — 60 tests for the MITM proxy and firewall enforcement: exfiltration attempts, method bypasses, entropy detection, rule verification.
+- **`network-proxy-test.sh`** — 60 tests for the MITM proxy and firewall enforcement: exfiltration attempts, method bypasses, rule verification.
 
 ---
 
