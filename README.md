@@ -2,7 +2,7 @@
 
 > **Early development** — this repo is under active development. Expect breaking changes between releases.
 >
-> **Testing status** — primarily tested with Claude Code on JavaScript/TypeScript projects. Mistral has seen less extensive testing. Other languages may require additional work to allow the necessary tools and commands to run properly inside the hardened container.
+> **Language support** — currently optimized for JavaScript/TypeScript projects (Node.js/Bun). The sandbox and `node_modules` isolation are built around the JS ecosystem. Support for additional languages (Python, Go, Rust, Ruby, Java, C#, and more) is planned via [mise](https://mise.jdx.dev), a universal toolchain manager — one container image, any language runtime, no additional images required.
 
 **ysa is a container runtime and local dashboard for running AI coding agents safely on your machine.**
 
