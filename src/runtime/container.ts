@@ -106,6 +106,6 @@ export async function teardownContainer(
     `podman stop $(podman ps -q --filter label=${label}=${id}) 2>/dev/null || true`,
   );
   await runShell(
-    `podman volume rm task-session-${id} node-modules-${id} 2>/dev/null || true`,
+    `podman volume rm node-modules-${id} 2>/dev/null || true`,
   );
 }

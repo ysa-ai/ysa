@@ -1,7 +1,7 @@
 import { readFile, stat, mkdir, appendFile } from "fs/promises";
 import { join } from "path";
 import { getProvider } from "../providers";
-import { createWorktree, prepareWorktree } from "./worktree";
+import { createWorktree, removeWorktree, prepareWorktree } from "./worktree";
 import { spawnSandbox } from "./container";
 import { getOrCreateAuthToken } from "../api/config-store";
 import type { RunConfig, RunResult, TaskStatus } from "../types";
@@ -34,6 +34,8 @@ export async function runTask(config: RunConfig): Promise<RunResult> {
   // 1. Create worktree (skip if resuming - worktree already exists)
   if (!config.resumeSessionId) {
     await appendFile(logPath, progressEntry("Creating git worktree..."));
+    // Remove stale worktree from a previous failed/stopped run before recreating
+    await removeWorktree(config.projectRoot, worktree, branch).catch(() => {});
     const wt = await createWorktree(config.projectRoot, worktree, branch, baseBranch);
     if (!wt.ok) {
       return {

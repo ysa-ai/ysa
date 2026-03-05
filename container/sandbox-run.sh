@@ -272,7 +272,8 @@ podman run --rm \
   -v "$WORKTREE:/workspace:rw" \
   --mount "type=volume,src=${NODE_MODULES_VOLUME},dst=/workspace/node_modules" \
   -v "$REPO_MOUNT" \
-  --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent" \
+  --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
+  --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude" \
   -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
   "$IMAGE" \
   -c "
@@ -288,7 +289,7 @@ podman run --rm \
         cp /etc/claude-defaults/settings.json /home/agent/.claude/settings.json
       fi
       if [ -f /home/agent/.claude.json ]; then
-        jq '.hasCompletedOnboarding = true | .projects[\"/workspace\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
+        jq '.hasCompletedOnboarding = true | .projects[\\\"/workspace\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
       else
         echo '{\"hasCompletedOnboarding\":true,\"projects\":{\"/workspace\":{\"hasTrustDialogAccepted\":true}}}' > /home/agent/.claude.json
       fi

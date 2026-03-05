@@ -35,45 +35,7 @@ function buildLauncherScript(opts: {
   proxyEnv: string;
 }): string {
   const { taskId, tokenEnvPath, worktree, gitDir, worktreeName, sessionVolume, resumeFlag, seccompProfile, proxyEnv } = opts;
-  return `#!/bin/bash
-set -euo pipefail
-
-# Load credentials and remove the file immediately
-# shellcheck source=/dev/null
-source ${shellescape(tokenEnvPath)}
-rm -f ${shellescape(tokenEnvPath)}
-
-echo -e "\\033[90mStarting sandbox for task ${taskId.slice(0, 8)}...\\033[0m"
-podman rm -f "refine-${taskId}" 2>/dev/null || true
-podman run --rm -it \\
-  --name "refine-${taskId}" \\
-  --user 1001:1001 \\
-  --network slirp4netns \\
-  --add-host host.containers.internal:host-gateway \\
-  --cap-drop ALL \\
-  --security-opt no-new-privileges \\
-  --security-opt seccomp=${shellescape(seccompProfile)} \\
-  --read-only \\
-  --tmpfs /tmp:rw,nosuid,size=256m \\
-  --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \\
-  --memory 4g \\
-  --pids-limit 512 \\
-  --cpus 2 \\
-  -e CLAUDE_CODE_OAUTH_TOKEN \\
-  ${proxyEnv} \\
-  -v ${shellescape(worktree)}:/workspace:rw \\
-  -v ${shellescape(gitDir)}:/repo.git:rw \\
-  --mount "type=volume,src=${sessionVolume},dst=/home/agent" \\
-  sandbox-claude \\
-  -c "
-    echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git
-    claude ${resumeFlag} --add-dir /workspace --dangerously-skip-permissions
-  "
-
-# Restore host worktree pointer
-echo "gitdir: ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}" > ${shellescape(worktree)}/.git
-echo ${shellescape(worktree)}/.git > ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}/gitdir
-`;
+  return `#!/bin/bash\nset -euo pipefail\n\n# Load credentials and remove the file immediately\n# shellcheck source=/dev/null\nsource ${shellescape(tokenEnvPath)}\nrm -f ${shellescape(tokenEnvPath)}\n\necho -e "\\033[90mStarting sandbox for task ${taskId.slice(0, 8)}...\\033[0m"\npodman rm -f "refine-${taskId}" 2>/dev/null || true\npodman run --rm -it \\\n  --name "refine-${taskId}" \\\n  --user 1001:1001 \\\n  --network slirp4netns \\\n  --add-host host.containers.internal:host-gateway \\\n  --cap-drop ALL \\\n  --security-opt no-new-privileges \\\n  --security-opt seccomp=${shellescape(seccompProfile)} \\\n  --read-only \\\n  --tmpfs /tmp:rw,nosuid,size=256m \\\n  --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \\\n  --memory 4g \\\n  --pids-limit 512 \\\n  --cpus 2 \\\n  -e CLAUDE_CODE_OAUTH_TOKEN \\\n  ${proxyEnv} \\\n  -v ${shellescape(worktree)}:/workspace:rw \\\n  -v ${shellescape(gitDir)}:/repo.git:rw \\\n  --tmpfs /home/agent:rw,nosuid,nodev,size=256m \\\n  --mount "type=volume,src=${sessionVolume},dst=/home/agent/.claude" \\\n  sandbox-claude \\\n  -c "\n    echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git\n    claude ${resumeFlag} --add-dir /workspace --dangerously-skip-permissions\n  "\n\n# Restore host worktree pointer\necho "gitdir: ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}" > ${shellescape(worktree)}/.git\necho ${shellescape(worktree)}/.git > ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}/gitdir\n`;
 }
 
 describe("openTerminal launcher: file-system security", () => {
@@ -150,13 +112,7 @@ describe("openTerminal launcher: file-system security", () => {
     await writeFile(tokenEnvPath, `CLAUDE_CODE_OAUTH_TOKEN=${shellescape(MOCK_TOKEN)}\n`, { mode: 0o600 });
 
     // Write a stripped-down launcher (just the credential-load section)
-    const credSection = `#!/bin/bash
-set -euo pipefail
-source ${shellescape(tokenEnvPath)}
-rm -f ${shellescape(tokenEnvPath)}
-# verify env var was loaded
-echo "loaded: $CLAUDE_CODE_OAUTH_TOKEN"
-`;
+    const credSection = `#!/bin/bash\nset -euo pipefail\nsource ${shellescape(tokenEnvPath)}\nrm -f ${shellescape(tokenEnvPath)}\n# verify env var was loaded\necho "loaded: $CLAUDE_CODE_OAUTH_TOKEN"\n`;
     await writeFile(launcherPath, credSection, { mode: 0o700 });
 
     expect(await fileExists(tokenEnvPath)).toBe(true);
@@ -188,5 +144,26 @@ echo "loaded: $CLAUDE_CODE_OAUTH_TOKEN"
     });
 
     expect(await fileExists(launcherPath)).toBe(false);
+  });
+
+  it("ut-3: buildLauncherScript uses tmpfs for home dir, not a named volume", () => {
+    const script = buildLauncherScript({
+      taskId: TEST_TASK_ID,
+      tokenEnvPath,
+      worktree: "/fake/worktree",
+      gitDir: "/fake/project/.git",
+      worktreeName: TEST_TASK_ID,
+      sessionVolume: `task-session-${TEST_TASK_ID}`,
+      resumeFlag: "",
+      seccompProfile: "/usr/share/ysa/seccomp.json",
+      proxyEnv: "",
+    });
+
+    // ut-3: home directory uses tmpfs; session volume mounts only at .claude subdirectory
+    expect(script).toContain("--tmpfs /home/agent");
+    expect(script).toContain("dst=/home/agent/.claude");
+    // Session volume must NOT be mounted as the full home directory
+    expect(script).not.toMatch(/type=volume,src=task-session-[^,]+,dst=\/home\/agent["\\]/);
+    expect(script).not.toContain(`,dst=/home/agent"`);
   });
 });
