@@ -119,7 +119,10 @@ export async function runTask(config: RunConfig): Promise<RunResult> {
     status = "failed";
     error = `Max turns (${config.maxTurns ?? 60}) reached.`;
     failureReason = "max_turns";
-  } else if (exitCode === 0) {
+  } else if (exitCode === 0 || (!parsed.lastError && (config.provider ?? "claude") === "claude")) {
+    // exitCode !== 0 with no lastError (Claude only) is a known false positive: Claude writes to
+    // settings.json (mounted :ro for security) at session end and exits with code 1.
+    // Since the work completed without errors, treat it as success.
     status = "completed";
   } else {
     status = "failed";
