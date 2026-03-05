@@ -12,6 +12,7 @@ import { ensureProxy } from "../runtime/proxy";
 import type { ScopedAllowRule } from "../runtime/proxy";
 import { getServerConfig, getOrCreateAuthToken } from "./config-store";
 import type { RunConfig } from "../types";
+import { writeAuditLog } from "../lib/audit";
 
 // Parse comma-separated allow entries into scoped rules + bypass hosts.
 // "host/path" → ScopedAllowRule, "host" → bypass host
@@ -198,6 +199,8 @@ export const taskActionsRouter = router({
         })
         .run();
 
+      writeAuditLog("task.create", { task_id: taskId, branch: input.branch, provider: input.provider ?? "claude", model: input.model ?? null, network_policy: networkPolicy });
+
       // Store prompt for container to fetch (with result + abort instructions appended)
       const promptKey = taskId;
       await fetch(`http://localhost:${serverConfig.port}/api/prompt/${promptKey}`, {
@@ -283,6 +286,7 @@ export const taskActionsRouter = router({
         })
         .where(eq(schema.tasks.task_id, input.taskId))
         .run();
+      writeAuditLog("task.stop", { task_id: input.taskId });
       return { ok: true };
     }),
 
@@ -312,6 +316,8 @@ export const taskActionsRouter = router({
         })
         .where(eq(schema.tasks.task_id, input.taskId))
         .run();
+
+      writeAuditLog("task.relaunch", { task_id: input.taskId });
 
       const serverConfig = getServerConfig();
 
@@ -402,6 +408,8 @@ export const taskActionsRouter = router({
         .where(eq(schema.tasks.task_id, input.taskId))
         .run();
 
+      writeAuditLog("task.continue", { task_id: input.taskId });
+
       const serverConfig = getServerConfig();
       const continueNetworkPolicy = (task.network_policy ?? "none") as "none" | "strict";
       if (continueNetworkPolicy === "strict") {
@@ -481,6 +489,8 @@ export const taskActionsRouter = router({
         })
         .where(eq(schema.tasks.task_id, input.taskId))
         .run();
+
+      writeAuditLog("task.refine", { task_id: input.taskId });
 
       const serverConfig = getServerConfig();
       const refineNetworkPolicy = (task.network_policy ?? "none") as "none" | "strict";
@@ -563,6 +573,7 @@ export const taskActionsRouter = router({
         .set({ status: "archived", worktree: "", updated_at: new Date().toISOString() })
         .where(eq(schema.tasks.task_id, input.taskId))
         .run();
+      writeAuditLog("task.archive", { task_id: input.taskId });
       return { ok: true };
     }),
 
@@ -585,6 +596,7 @@ export const taskActionsRouter = router({
       db.delete(schema.tasks)
         .where(eq(schema.tasks.task_id, input.taskId))
         .run();
+      writeAuditLog("task.delete", { task_id: input.taskId });
       return { ok: true };
     }),
 
@@ -679,9 +691,9 @@ podman run --rm -it \\
       chmod +x /home/agent/.claude/hooks/sandbox-guard.sh 2>/dev/null
     fi
     if [ -f /home/agent/.claude.json ]; then
-      jq '.hasCompletedOnboarding = true | .projects[\\\\"/workspace\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
+      jq '.hasCompletedOnboarding = true | .projects[\\\\\"/workspace\\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
     else
-      echo '{\\\"hasCompletedOnboarding\\\":true,\\\"projects\\\":{\\\"\/workspace\\\":{\\\"hasTrustDialogAccepted\\\":true}}}' > /home/agent/.claude.json
+      echo '{\\\"hasCompletedOnboarding\\\":true,\\\"projects\\\":{\\\"\\/workspace\\\":{\\\"hasTrustDialogAccepted\\\":true}}}' > /home/agent/.claude.json
     fi
 
     echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git
@@ -703,6 +715,7 @@ echo ${shellescape(worktree)}/.git > ${shellescape(gitDir)}/worktrees/${shellesc
       const { getConfig } = await import("./config-store");
       const terminalId = getConfig().preferred_terminal ?? "terminal";
       await openInTerminal(launcherPath, input.taskId.slice(0, 8), terminalId);
+      writeAuditLog("task.openTerminal", { task_id: input.taskId });
 
       setTimeout(async () => {
         try { await unlink(launcherPath); } catch {}

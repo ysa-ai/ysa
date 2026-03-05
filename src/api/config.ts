@@ -4,6 +4,7 @@ import { join } from "path";
 import { router, publicProcedure } from "./init";
 import { getConfig, setConfig } from "./config-store";
 import { getApiKey, setApiKey, hasApiKey } from "./keystore";
+import { writeAuditLog } from "../lib/audit";
 
 async function pickDirectoryNative(): Promise<string | null> {
   if (process.platform === "darwin") {
@@ -64,6 +65,8 @@ export const configRouter = router({
         }
       }
       setConfig(input);
+      const changedKeys = Object.keys(input).filter((k) => (input as Record<string, unknown>)[k] !== undefined);
+      writeAuditLog("config.set", { keys: changedKeys });
       return getConfig();
     }),
 
@@ -76,6 +79,7 @@ export const configRouter = router({
     )
     .mutation(async ({ input }) => {
       await setApiKey(input.provider, input.value);
+      writeAuditLog("config.setApiKey", { provider: input.provider, cleared: input.value === null });
       return {
         has_anthropic_key: await hasApiKey("anthropic"),
         has_mistral_key: await hasApiKey("mistral"),
