@@ -681,7 +681,8 @@ podman run --rm -it \\
   ${proxyEnv} \\
   -v ${shellescape(worktree)}:/workspace:rw \\
   -v ${shellescape(gitDir)}:/repo.git:rw \\
-  --mount "type=volume,src=${sessionVolume},dst=/home/agent" \\
+  --tmpfs /home/agent:rw,nosuid,nodev,size=256m \
+  --mount "type=volume,src=${sessionVolume},dst=/home/agent/.claude" \\
   sandbox-claude \\
   -c "
     if [ ! -f /home/agent/.claude/settings.json ] && [ -f /etc/claude-defaults/settings.json ]; then
