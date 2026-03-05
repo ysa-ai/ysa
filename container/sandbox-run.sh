@@ -272,7 +272,7 @@ podman run --rm \
   -v "$WORKTREE:/workspace:rw" \
   --mount "type=volume,src=${NODE_MODULES_VOLUME},dst=/workspace/node_modules" \
   -v "$REPO_MOUNT" \
-  --tmpfs /home/agent:rw,nosuid,nodev,size=256m \
+  --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
   --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude" \
   -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
   "$IMAGE" \
