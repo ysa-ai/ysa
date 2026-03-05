@@ -9,7 +9,7 @@
  * Env: PROXY_POLICY (JSON) — defaults to strict policy.
  */
 
-import { readFileSync, openSync, writeSync, closeSync } from "fs";
+import { readFileSync, openSync, writeSync, closeSync, writeFileSync } from "fs";
 import { createServer as createNetServer, Socket } from "net";
 import { spawn } from "child_process";
 
@@ -32,6 +32,8 @@ interface StrictPolicy {
   rateLimitPerDomain: number; // req/min
   burstThreshold: number;     // max requests in 5s window
   outboundByteBudget: number; // bytes/min across URLs + headers
+  globalRateLimitPerTask: number; // req/min across all domains for one task
+  globalOutboundBudget: number;   // bytes/min across all domains for one task
   bypassHosts: string[];
   scopedAllowRules: ScopedAllowRule[]; // MCP tool hosts — allow all methods for specific project paths
 }
@@ -78,6 +80,8 @@ const DEFAULT_POLICY: StrictPolicy = {
   rateLimitPerDomain: 30,
   burstThreshold: 10,
   outboundByteBudget: 51200, // 50KB/min
+  globalRateLimitPerTask: 300,   // 10× per-domain; covers ≤10 legitimate domains at max rate
+  globalOutboundBudget: 512000,  // 500 KB/min global cap
   bypassHosts: [...BASE_BYPASS_HOSTS, ...providerBypassHosts],
   scopedAllowRules: [],
 };
@@ -142,6 +146,64 @@ function getCounters(domain: string): DomainCounters {
   return c;
 }
 
+// ── Global per-task counters ─────────────────────────────────────────────────
+
+interface GlobalCounters {
+  minuteCount: number;
+  minuteStart: number;
+  outboundBytes: number;
+  outboundStart: number;
+}
+
+const globalCounters = new Map<string, GlobalCounters>();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, g] of globalCounters) {
+    if (now - g.minuteStart > 120_000) globalCounters.delete(key);
+  }
+}, 60_000);
+
+function getGlobalCounters(taskKey: string): GlobalCounters {
+  let g = globalCounters.get(taskKey);
+  const now = Date.now();
+  if (!g) {
+    g = { minuteCount: 0, minuteStart: now, outboundBytes: 0, outboundStart: now };
+    globalCounters.set(taskKey, g);
+    return g;
+  }
+  if (now - g.minuteStart > 60_000) {
+    g.minuteCount = 0; g.minuteStart = now;
+    g.outboundBytes = 0; g.outboundStart = now;
+  }
+  return g;
+}
+
+// ── Counter persistence ──────────────────────────────────────────────────────
+
+const STATE_FILE = "/var/proxy-state/counters.json";
+
+function loadCounters(): void {
+  try {
+    const raw = readFileSync(STATE_FILE, "utf-8");
+    const data = JSON.parse(raw);
+    for (const [k, v] of Object.entries(data.global ?? {})) globalCounters.set(k, v as GlobalCounters);
+    for (const [k, v] of Object.entries(data.domain ?? {})) domainCounters.set(k, v as DomainCounters);
+  } catch {}
+}
+
+function saveCounters(): void {
+  try {
+    const data = {
+      global: Object.fromEntries(globalCounters),
+      domain: Object.fromEntries(domainCounters),
+    };
+    writeFileSync(STATE_FILE, JSON.stringify(data));
+  } catch (err: any) {
+    console.error(`[proxy] saveCounters failed: ${err.message}`);
+  }
+}
+
 function checkRateLimits(domain: string, pathLength: number, headerBytes: number, taskId: string): string | null {
   const key = `${taskId || "_shared"}:${domain}`;
   const c = getCounters(key);
@@ -158,6 +220,19 @@ function checkRateLimits(domain: string, pathLength: number, headerBytes: number
   if (c.outboundBytes > policy.outboundByteBudget) {
     return `outbound_budget: ${c.outboundBytes}/${policy.outboundByteBudget} bytes/min for ${domain}`;
   }
+
+  // Global limits — aggregate across all domains for this task
+  const taskKey = taskId || "_shared";
+  const g = getGlobalCounters(taskKey);
+  const bytes = pathLength + headerBytes;
+  g.minuteCount++;
+  g.outboundBytes += bytes;
+  if (g.minuteCount > policy.globalRateLimitPerTask)
+    return `global_rate_limit: ${g.minuteCount}/${policy.globalRateLimitPerTask} req/min [task ${taskKey}]`;
+  if (g.outboundBytes > policy.globalOutboundBudget)
+    return `global_outbound_budget: ${g.outboundBytes}/${policy.globalOutboundBudget} bytes/min [task ${taskKey}]`;
+  saveCounters();
+
   return null;
 }
 
@@ -403,6 +478,10 @@ function handleHttpRequest(clientSocket: Socket, data: Buffer) {
 
   const upstreamPort = parseInt(parsedUrl.port) || 80;
   const upstream = new Socket();
+  // Force connection close so each HTTP request requires a new TCP connection.
+  // Without this, keep-alive connections pipe subsequent requests directly,
+  // bypassing handleHttpRequest and all policy/rate-limit checks entirely.
+  cleanHeaders["connection"] = "close";
   upstream.connect(upstreamPort, parsedUrl.hostname, () => {
     // Rewrite the request line to use path-only (not absolute URL)
     const reqLine = `${method} ${parsedUrl.pathname}${parsedUrl.search} HTTP/1.1\r\n`;
@@ -482,6 +561,14 @@ async function createMitmConnection(
           body: hasBody ? req.body : undefined,
           redirect: "manual",
         });
+
+        // Track response bytes against global budget (best-effort: Content-Length only)
+        const respLen = parseInt(upstreamResp.headers.get("content-length") ?? "0", 10);
+        if (!isNaN(respLen) && respLen > 0) {
+          const g = getGlobalCounters(taskId || "_shared");
+          g.outboundBytes += respLen;
+          saveCounters();
+        }
 
         // Bun's fetch auto-decompresses the body but keeps Content-Encoding.
         // Strip it so the client doesn't try to decompress again.
@@ -589,6 +676,8 @@ const server = createNetServer((clientSocket: Socket) => {
   clientSocket.on("data", onData);
   clientSocket.on("error", () => {});
 });
+
+loadCounters();
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[proxy] Network proxy listening on port ${PORT}`);

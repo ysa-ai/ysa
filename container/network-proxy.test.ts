@@ -1,13 +1,16 @@
 /**
- * Unit tests for network-proxy.ts fixes:
- * - ut-1: per-task rate limit key isolation
- * - ut-2: per-task log file path construction
- * - ut-3: per-connection MITM closure captures taskId correctly
+ * Unit tests for network-proxy.ts:
+ * - ut-1 (fix/12): per-task rate limit key isolation
+ * - ut-2 (fix/12): per-task log file path construction
+ * - ut-3 (fix/12): per-connection MITM closure captures taskId correctly
+ * - ut-1 (fix/10): global limit field parsing from PROXY_POLICY env var
+ * - ut-2 (fix/10): counter persistence round-trip via saveCounters/loadCounters
  */
 
 import { describe, it, expect } from "bun:test";
+import { writeFileSync, readFileSync, unlinkSync } from "fs";
 
-// ── ut-1: Rate limit counter key isolation ─────────────────────────────────
+// ── ut-1 (fix/12): Rate limit counter key isolation ─────────────────────────
 
 describe("checkRateLimits key isolation (ut-1)", () => {
   interface DomainCounters {
@@ -97,7 +100,7 @@ describe("checkRateLimits key isolation (ut-1)", () => {
   });
 });
 
-// ── ut-2: appendToTaskLog path construction ────────────────────────────────
+// ── ut-2 (fix/12): appendToTaskLog path construction ────────────────────────
 
 describe("appendToTaskLog path construction (ut-2)", () => {
   const LOG_DIR = "/proxy-logs";
@@ -126,7 +129,7 @@ describe("appendToTaskLog path construction (ut-2)", () => {
   });
 });
 
-// ── ut-3: Per-connection MITM closure captures taskId correctly ─────────────
+// ── ut-3 (fix/12): Per-connection MITM closure captures taskId correctly ─────
 
 describe("MITM per-connection closure taskId capture (ut-3)", () => {
   it("each CONNECT request creates an independent closure with its own taskId", async () => {
@@ -182,5 +185,200 @@ describe("MITM per-connection closure taskId capture (ut-3)", () => {
     expect(getterA()).toBe("taskA");
     expect(getterB()).toBe("taskB");
     expect(getterA()).toBe("taskA"); // still correct after getterB was called
+  });
+});
+
+// ── ut-1 (fix/10): Policy global limit field parsing ────────────────────────
+
+describe("Policy globalRateLimitPerTask and globalOutboundBudget parsing (ut-1 fix/10)", () => {
+  const DEFAULTS = { globalRateLimitPerTask: 300, globalOutboundBudget: 512000 };
+
+  function parseGlobalLimits(env: string | undefined): { globalRateLimitPerTask: number; globalOutboundBudget: number } {
+    try {
+      if (!env) return { ...DEFAULTS };
+      const parsed = JSON.parse(env);
+      return {
+        globalRateLimitPerTask: parsed.globalRateLimitPerTask ?? DEFAULTS.globalRateLimitPerTask,
+        globalOutboundBudget: parsed.globalOutboundBudget ?? DEFAULTS.globalOutboundBudget,
+      };
+    } catch {
+      return { ...DEFAULTS };
+    }
+  }
+
+  it("uses default globalRateLimitPerTask=300 when PROXY_POLICY is absent", () => {
+    const p = parseGlobalLimits(undefined);
+    expect(p.globalRateLimitPerTask).toBe(300);
+  });
+
+  it("uses default globalOutboundBudget=512000 when PROXY_POLICY is absent", () => {
+    const p = parseGlobalLimits(undefined);
+    expect(p.globalOutboundBudget).toBe(512000);
+  });
+
+  it("parses globalRateLimitPerTask from PROXY_POLICY JSON", () => {
+    const p = parseGlobalLimits(JSON.stringify({ globalRateLimitPerTask: 150 }));
+    expect(p.globalRateLimitPerTask).toBe(150);
+    expect(p.globalOutboundBudget).toBe(512000); // default preserved
+  });
+
+  it("parses globalOutboundBudget from PROXY_POLICY JSON", () => {
+    const p = parseGlobalLimits(JSON.stringify({ globalOutboundBudget: 1024000 }));
+    expect(p.globalRateLimitPerTask).toBe(300); // default preserved
+    expect(p.globalOutboundBudget).toBe(1024000);
+  });
+
+  it("parses both global fields together", () => {
+    const p = parseGlobalLimits(JSON.stringify({ globalRateLimitPerTask: 50, globalOutboundBudget: 256000 }));
+    expect(p.globalRateLimitPerTask).toBe(50);
+    expect(p.globalOutboundBudget).toBe(256000);
+  });
+
+  it("falls back to defaults when PROXY_POLICY contains malformed JSON", () => {
+    const p = parseGlobalLimits("not-valid-json{");
+    expect(p.globalRateLimitPerTask).toBe(300);
+    expect(p.globalOutboundBudget).toBe(512000);
+  });
+
+  it("falls back to defaults for missing fields in valid JSON", () => {
+    const p = parseGlobalLimits(JSON.stringify({ scopedAllowRules: [] }));
+    expect(p.globalRateLimitPerTask).toBe(300);
+    expect(p.globalOutboundBudget).toBe(512000);
+  });
+});
+
+// ── ut-2 (fix/10): Counter persistence round-trip ───────────────────────────
+
+describe("Counter persistence round-trip (ut-2 fix/10)", () => {
+  interface GlobalCounters {
+    minuteCount: number;
+    minuteStart: number;
+    outboundBytes: number;
+    outboundStart: number;
+  }
+
+  interface DomainCounters {
+    minuteCount: number;
+    minuteStart: number;
+    burstCount: number;
+    burstStart: number;
+    outboundBytes: number;
+    outboundStart: number;
+  }
+
+  function save(
+    filePath: string,
+    global: Map<string, GlobalCounters>,
+    domain: Map<string, DomainCounters>,
+  ): void {
+    const data = {
+      global: Object.fromEntries(global),
+      domain: Object.fromEntries(domain),
+    };
+    writeFileSync(filePath, JSON.stringify(data));
+  }
+
+  function load(
+    filePath: string,
+    global: Map<string, GlobalCounters>,
+    domain: Map<string, DomainCounters>,
+  ): void {
+    try {
+      const raw = readFileSync(filePath, "utf-8");
+      const data = JSON.parse(raw);
+      for (const [k, v] of Object.entries(data.global ?? {})) global.set(k, v as GlobalCounters);
+      for (const [k, v] of Object.entries(data.domain ?? {})) domain.set(k, v as DomainCounters);
+    } catch {}
+  }
+
+  it("saveCounters/loadCounters round-trip restores globalCounters minuteCount and outboundBytes", () => {
+    const tmpFile = `/tmp/test-counters-${Date.now()}.json`;
+    const now = Date.now();
+
+    const globalIn = new Map<string, GlobalCounters>();
+    const domainIn = new Map<string, DomainCounters>();
+
+    globalIn.set("task-abc", {
+      minuteCount: 42,
+      minuteStart: now - 5000,
+      outboundBytes: 12345,
+      outboundStart: now - 3000,
+    });
+
+    domainIn.set("task-abc:github.com", {
+      minuteCount: 15,
+      minuteStart: now - 5000,
+      burstCount: 3,
+      burstStart: now - 1000,
+      outboundBytes: 6789,
+      outboundStart: now - 3000,
+    });
+
+    save(tmpFile, globalIn, domainIn);
+
+    const globalOut = new Map<string, GlobalCounters>();
+    const domainOut = new Map<string, DomainCounters>();
+    load(tmpFile, globalOut, domainOut);
+
+    const restoredGlobal = globalOut.get("task-abc");
+    expect(restoredGlobal).toBeDefined();
+    expect(restoredGlobal!.minuteCount).toBe(42);
+    expect(restoredGlobal!.outboundBytes).toBe(12345);
+
+    const restoredDomain = domainOut.get("task-abc:github.com");
+    expect(restoredDomain).toBeDefined();
+    expect(restoredDomain!.minuteCount).toBe(15);
+    expect(restoredDomain!.burstCount).toBe(3);
+    expect(restoredDomain!.outboundBytes).toBe(6789);
+
+    try { unlinkSync(tmpFile); } catch {}
+  });
+
+  it("all entries from globalCounters are restored after round-trip", () => {
+    const tmpFile = `/tmp/test-counters-multi-${Date.now()}.json`;
+    const now = Date.now();
+
+    const globalIn = new Map<string, GlobalCounters>();
+    const domainIn = new Map<string, DomainCounters>();
+
+    globalIn.set("task-1", { minuteCount: 10, minuteStart: now, outboundBytes: 100, outboundStart: now });
+    globalIn.set("task-2", { minuteCount: 20, minuteStart: now, outboundBytes: 200, outboundStart: now });
+    globalIn.set("_shared", { minuteCount: 5, minuteStart: now, outboundBytes: 50, outboundStart: now });
+
+    save(tmpFile, globalIn, domainIn);
+
+    const globalOut = new Map<string, GlobalCounters>();
+    const domainOut = new Map<string, DomainCounters>();
+    load(tmpFile, globalOut, domainOut);
+
+    expect(globalOut.size).toBe(3);
+    expect(globalOut.get("task-1")?.minuteCount).toBe(10);
+    expect(globalOut.get("task-2")?.minuteCount).toBe(20);
+    expect(globalOut.get("_shared")?.minuteCount).toBe(5);
+
+    try { unlinkSync(tmpFile); } catch {}
+  });
+
+  it("loadCounters is a no-op when the file does not exist", () => {
+    const globalOut = new Map<string, GlobalCounters>();
+    const domainOut = new Map<string, DomainCounters>();
+
+    load("/nonexistent/path/counters.json", globalOut, domainOut);
+
+    expect(globalOut.size).toBe(0);
+    expect(domainOut.size).toBe(0);
+  });
+
+  it("loadCounters is a no-op when the file contains invalid JSON", () => {
+    const tmpFile = `/tmp/test-counters-bad-${Date.now()}.json`;
+    writeFileSync(tmpFile, "{ invalid json }");
+
+    const globalOut = new Map<string, GlobalCounters>();
+    const domainOut = new Map<string, DomainCounters>();
+    load(tmpFile, globalOut, domainOut);
+
+    expect(globalOut.size).toBe(0);
+
+    try { unlinkSync(tmpFile); } catch {}
   });
 });
