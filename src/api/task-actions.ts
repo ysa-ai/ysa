@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { router, publicProcedure } from "./init";
 import { getDb, schema } from "../db";
-import { eq } from "drizzle-orm";
+import { eq, or, count } from "drizzle-orm";
 import { writeFile, readFile, stat, unlink, mkdir } from "fs/promises";
 import { join } from "path";
 import { runTask } from "../runtime/runner";
@@ -10,12 +10,63 @@ import { removeWorktree } from "../runtime/worktree";
 import { getProvider } from "../providers";
 import { ensureProxy } from "../runtime/proxy";
 import type { ScopedAllowRule } from "../runtime/proxy";
-import { getServerConfig, getOrCreateAuthToken } from "./config-store";
+import { getServerConfig, getOrCreateAuthToken, getConfig } from "./config-store";
 import type { RunConfig } from "../types";
 import { writeAuditLog } from "../lib/audit";
 
+const MIN_DISK_MB = 512;
+
+export function assertConcurrencyLimit(activeCount: number, limit: number): void {
+  if (activeCount >= limit) {
+    throw new Error(
+      `Too many active tasks (${activeCount}/${limit}). Stop or wait for a running task to finish.`
+    );
+  }
+}
+
+export function assertDiskSpace(availableKb: number, minMb: number = MIN_DISK_MB): void {
+  if (availableKb < minMb * 1024) {
+    throw new Error(
+      `Insufficient disk space: ${Math.floor(availableKb / 1024)} MB available, need at least ${minMb} MB.`
+    );
+  }
+}
+
+async function checkConcurrencyLimit(): Promise<void> {
+  const db = getDb();
+  const config = getConfig();
+  const limit = config.max_concurrent_tasks ?? 10;
+  const row = db
+    .select({ total: count() })
+    .from(schema.tasks)
+    .where(or(eq(schema.tasks.status, "queued"), eq(schema.tasks.status, "running")))
+    .get();
+  assertConcurrencyLimit(row?.total ?? 0, limit);
+}
+
+async function getAvailableKb(path: string): Promise<number> {
+  try {
+    const proc = Bun.spawn(["df", "-Pk", path], { stdout: "pipe", stderr: "pipe" });
+    await proc.exited;
+    const output = await new Response(proc.stdout).text();
+    const lines = output.trim().split("\n");
+    if (lines.length < 2) return Infinity;
+    const parts = lines[1].trim().split(/\s+/);
+    const available = parseInt(parts[3], 10);
+    return isNaN(available) ? Infinity : available;
+  } catch {
+    return Infinity;
+  }
+}
+
+async function checkDiskSpace(projectRoot: string): Promise<void> {
+  if (!projectRoot) return;
+  const availableKb = await getAvailableKb(projectRoot);
+  assertDiskSpace(availableKb);
+}
+
 // Parse comma-separated allow entries into scoped rules + bypass hosts.
-// "host/path" → ScopedAllowRule, "host" → bypass host
+// "host/path" -> ScopedAllowRule, "host" -> bypass host
 function parseAllowedHosts(raw: string | null | undefined): { scopedRules: ScopedAllowRule[]; bypassHosts: string[] } {
   const scopedRules: ScopedAllowRule[] = [];
   const bypassHosts: string[] = [];
@@ -38,7 +89,7 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 export function shellescape(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
+  return "'" + value.replace(/'/g, "'\\'' ".trimEnd()) + "'";
 }
 
 const RESULT_SUFFIX = `
@@ -64,7 +115,7 @@ If you encounter a blocker that prevents you from completing the task — missin
 **On ANY blocker:**
 1. Do NOT retry the same action
 2. Do NOT try to work around it
-3. Write \`[TASK_ABORTED]: <brief reason>\` as your FINAL message
+3. Write [TASK_ABORTED]: <brief reason> as your FINAL message
 4. Stop immediately`;
 
 const REFINE_SUFFIX = "\n\n---\nAfter completing these refinements, read the existing /workspace/RESULT.md and append a new Refinement section at the end describing what was changed in this pass. Keep the existing content intact. Only rewrite earlier sections if the refinement directly invalidates them or if the user explicitly asked for a rewrite.";
@@ -164,8 +215,10 @@ export const taskActionsRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      const db = getDb();
       const serverConfig = getServerConfig();
+      await checkConcurrencyLimit();
+      await checkDiskSpace(serverConfig.projectRoot);
+      const db = getDb();
       const taskId = crypto.randomUUID();
       const worktreePrefix = serverConfig.worktreePrefix;
       const projectRoot = serverConfig.projectRoot;
@@ -304,6 +357,10 @@ export const taskActionsRouter = router({
         throw new Error(`Cannot relaunch task in status: ${task.status}`);
       }
 
+      const serverConfig = getServerConfig();
+      await checkConcurrencyLimit();
+      await checkDiskSpace(serverConfig.projectRoot);
+
       // Reset status
       db.update(schema.tasks)
         .set({
@@ -318,8 +375,6 @@ export const taskActionsRouter = router({
         .run();
 
       writeAuditLog("task.relaunch", { task_id: input.taskId });
-
-      const serverConfig = getServerConfig();
 
       // Store prompt for container to fetch (with result + abort instructions appended)
       await fetch(`http://localhost:${serverConfig.port}/api/prompt/${input.taskId}`, {
@@ -397,6 +452,10 @@ export const taskActionsRouter = router({
       }
       if (!task.session_id) throw new Error("No session_id to resume");
 
+      const serverConfig = getServerConfig();
+      await checkConcurrencyLimit();
+      await checkDiskSpace(serverConfig.projectRoot);
+
       db.update(schema.tasks)
         .set({
           status: "running",
@@ -409,8 +468,6 @@ export const taskActionsRouter = router({
         .run();
 
       writeAuditLog("task.continue", { task_id: input.taskId });
-
-      const serverConfig = getServerConfig();
       const continueNetworkPolicy = (task.network_policy ?? "none") as "none" | "strict";
       if (continueNetworkPolicy === "strict") {
         const { scopedRules, bypassHosts: extraBypass } = parseAllowedHosts(task.allowed_hosts);
@@ -479,6 +536,10 @@ export const taskActionsRouter = router({
       }
       if (!task.session_id) throw new Error("No session_id to resume");
 
+      const serverConfig = getServerConfig();
+      await checkConcurrencyLimit();
+      await checkDiskSpace(serverConfig.projectRoot);
+
       db.update(schema.tasks)
         .set({
           status: "running",
@@ -491,8 +552,6 @@ export const taskActionsRouter = router({
         .run();
 
       writeAuditLog("task.refine", { task_id: input.taskId });
-
-      const serverConfig = getServerConfig();
       const refineNetworkPolicy = (task.network_policy ?? "none") as "none" | "strict";
       if (refineNetworkPolicy === "strict") {
         const { scopedRules, bypassHosts: extraBypass } = parseAllowedHosts(task.allowed_hosts);
@@ -692,9 +751,9 @@ podman run --rm -it \\
       chmod +x /home/agent/.claude/hooks/sandbox-guard.sh 2>/dev/null
     fi
     if [ -f /home/agent/.claude.json ]; then
-      jq '.hasCompletedOnboarding = true | .projects[\\\\\"/workspace\\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
+      jq '.hasCompletedOnboarding = true | .projects[\\\\"/workspace\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
     else
-      echo '{\\\"hasCompletedOnboarding\\\":true,\\\"projects\\\":{\\\"\\/workspace\\\":{\\\"hasTrustDialogAccepted\\\":true}}}' > /home/agent/.claude.json
+      echo '{\\"hasCompletedOnboarding\\":true,\\"projects\\":{\\"\\/workspace\\":{\\"hasTrustDialogAccepted\\":true}}}' > /home/agent/.claude.json
     fi
 
     echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git
