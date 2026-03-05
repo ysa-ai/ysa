@@ -306,7 +306,7 @@ podman run --rm \
       *)
         if [ -n \"\$PROMPT_URL\" ]; then
           _progress 'Fetching prompt...'
-          PROMPT=\$(curl --max-time 30 -sf -H \"Authorization: Bearer \$PROMPT_TOKEN\" \"\$PROMPT_URL\")
+          PROMPT=\$(curl --max-time 10 --connect-timeout 5 -sf -H \"Authorization: Bearer \$PROMPT_TOKEN\" \"\$PROMPT_URL\")
           if [ -z \"\$PROMPT\" ]; then
             echo 'ERROR: Failed to fetch prompt from PROMPT_URL' >&2
             exit 1
