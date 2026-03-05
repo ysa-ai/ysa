@@ -1,6 +1,8 @@
 # Your Secure Agent
 
 > **Early development** — this repo is under active development. Expect breaking changes between releases.
+>
+> **Testing status** — primarily tested with Claude Code on JavaScript/TypeScript projects. Mistral has seen less extensive testing. Other languages may require additional work to allow the necessary tools and commands to run properly inside the hardened container.
 
 **ysa is a container runtime and local dashboard for running AI coding agents safely on your machine.**
 
