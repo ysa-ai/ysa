@@ -56,6 +56,11 @@ RUN chmod +x /opt/proxy/oci-network-hook.sh
 
 USER agent
 
+# Install mise universal toolchain manager
+RUN curl https://mise.run | sh
+ENV PATH="/home/agent/.local/bin:$PATH"
+RUN mise --version
+
 # Lock down git via env vars (same as Claude image)
 ENV GIT_CONFIG_COUNT=17 \
     GIT_CONFIG_KEY_0=core.fsmonitor \
