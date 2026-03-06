@@ -1,4 +1,4 @@
-import { stat, readFile, mkdir, writeFile } from "fs/promises";
+import { stat, readFile, mkdir, writeFile, open, unlink } from "fs/promises";
 import { join } from "path";
 
 async function fileExists(path: string): Promise<boolean> {
@@ -27,41 +27,74 @@ async function runShell(
   return { ok: exitCode === 0, stdout: stdout.trim(), stderr: stderr.trim() };
 }
 
+export async function withFileLock<T>(
+  lockPath: string,
+  fn: () => Promise<T>,
+  timeoutMs = 10_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let delay = 50;
+  while (true) {
+    try {
+      const fd = await open(lockPath, "wx");
+      try {
+        return await fn();
+      } finally {
+        await fd.close();
+        await unlink(lockPath).catch(() => {});
+      }
+    } catch (err: any) {
+      if (err.code !== "EEXIST") throw err;
+      if (Date.now() >= deadline) {
+        throw new Error(`Could not acquire worktree lock after ${timeoutMs}ms: ${lockPath}`);
+      }
+      await Bun.sleep(delay);
+      delay = Math.min(delay * 2, 1_000);
+    }
+  }
+}
+
 export async function createWorktree(
   projectRoot: string,
   worktreePath: string,
   branch: string,
   baseBranch?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  // Ensure the repo has at least one commit — worktrees require a valid HEAD
-  const headCheck = await runShell(`git -C ${projectRoot} rev-parse HEAD`);
-  if (!headCheck.ok) {
-    const init = await runShell(
-      `git -C ${projectRoot} -c user.email="ysa@localhost" -c user.name="ysa" commit --allow-empty -m "init"`,
+  const ysaDir = join(projectRoot, ".ysa");
+  await mkdir(ysaDir, { recursive: true });
+  const lockPath = join(ysaDir, "worktree.lock");
+
+  return withFileLock(lockPath, async () => {
+    // Ensure the repo has at least one commit — worktrees require a valid HEAD
+    const headCheck = await runShell(`git -C ${projectRoot} rev-parse HEAD`);
+    if (!headCheck.ok) {
+      const init = await runShell(
+        `git -C ${projectRoot} -c user.email="ysa@localhost" -c user.name="ysa" commit --allow-empty -m "init"`,
+      );
+      if (!init.ok) return { ok: false, error: `Failed to create initial commit: ${init.stderr}` };
+    }
+
+    // Verify baseBranch exists — if not (e.g. fresh repo with different default branch), ignore it
+    let resolvedBase = "";
+    if (baseBranch) {
+      const refCheck = await runShell(`git -C ${projectRoot} rev-parse --verify ${baseBranch}`);
+      if (refCheck.ok) resolvedBase = ` ${baseBranch}`;
+    }
+
+    // Create new branch, optionally based on a specific branch
+    let result = await runShell(
+      `git -C ${projectRoot} worktree add ${worktreePath} -b ${branch}${resolvedBase}`,
     );
-    if (!init.ok) return { ok: false, error: `Failed to create initial commit: ${init.stderr}` };
-  }
+    if (result.ok) return { ok: true };
 
-  // Verify baseBranch exists — if not (e.g. fresh repo with different default branch), ignore it
-  let resolvedBase = "";
-  if (baseBranch) {
-    const refCheck = await runShell(`git -C ${projectRoot} rev-parse --verify ${baseBranch}`);
-    if (refCheck.ok) resolvedBase = ` ${baseBranch}`;
-  }
+    // Branch may already exist — try without -b
+    result = await runShell(
+      `git -C ${projectRoot} worktree add ${worktreePath} ${branch}`,
+    );
+    if (result.ok) return { ok: true };
 
-  // Create new branch, optionally based on a specific branch
-  let result = await runShell(
-    `git -C ${projectRoot} worktree add ${worktreePath} -b ${branch}${resolvedBase}`,
-  );
-  if (result.ok) return { ok: true };
-
-  // Branch may already exist — try without -b
-  result = await runShell(
-    `git -C ${projectRoot} worktree add ${worktreePath} ${branch}`,
-  );
-  if (result.ok) return { ok: true };
-
-  return { ok: false, error: result.stderr };
+    return { ok: false, error: result.stderr };
+  });
 }
 
 export async function removeWorktree(
