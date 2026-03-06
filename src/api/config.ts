@@ -54,6 +54,7 @@ export const configRouter = router({
         default_network_policy: z.enum(["none", "strict"]).optional(),
         preferred_terminal: z.string().nullable().optional(),
         port: z.number().int().min(1024).max(65535).nullable().optional(),
+        max_concurrent_tasks: z.number().int().min(1).max(100).optional(),
       }),
     )
     .mutation(async ({ input }) => {

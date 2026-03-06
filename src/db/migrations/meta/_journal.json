@@ -64,6 +64,13 @@
       "when": 1771200008000,
       "tag": "0009_add_auth_token",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1771200009000,
+      "tag": "0010_add_max_concurrent_tasks",
+      "breakpoints": true
     }
   ]
 }

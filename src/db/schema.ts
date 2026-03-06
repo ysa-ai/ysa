@@ -39,4 +39,5 @@ export const config = sqliteTable("config", {
   anthropic_api_key: text("anthropic_api_key"),
   mistral_api_key: text("mistral_api_key"),
   auth_token: text("auth_token"),
+  max_concurrent_tasks: integer("max_concurrent_tasks").notNull().default(10),
 });

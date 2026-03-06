@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { shellescape } from "./task-actions";
+import { shellescape, assertConcurrencyLimit, assertDiskSpace } from "./task-actions";
 import { join } from "path";
 
 describe("shellescape", () => {
@@ -21,6 +21,36 @@ describe("shellescape", () => {
 
   it("ut-1: escapes multiple embedded single quotes", () => {
     expect(shellescape("a'b'c")).toBe("'a'\\''b'\\''c'");
+  });
+});
+
+describe("assertConcurrencyLimit", () => {
+  it("ut-3: does not throw when count is below limit", () => {
+    expect(() => assertConcurrencyLimit(3, 10)).not.toThrow();
+  });
+  it("ut-3: does not throw when count equals limit minus one", () => {
+    expect(() => assertConcurrencyLimit(9, 10)).not.toThrow();
+  });
+  it("ut-3: throws when count equals limit", () => {
+    expect(() => assertConcurrencyLimit(10, 10)).toThrow("Too many active tasks");
+  });
+  it("ut-3: throws when count exceeds limit", () => {
+    expect(() => assertConcurrencyLimit(15, 10)).toThrow("Too many active tasks");
+  });
+});
+
+describe("assertDiskSpace", () => {
+  it("ut-4: does not throw when space is above minimum", () => {
+    expect(() => assertDiskSpace(2_000_000, 512)).not.toThrow();
+  });
+  it("ut-4: does not throw at exactly the threshold", () => {
+    expect(() => assertDiskSpace(512 * 1024, 512)).not.toThrow();
+  });
+  it("ut-4: throws when space is below minimum", () => {
+    expect(() => assertDiskSpace(256 * 1024, 512)).toThrow("Insufficient disk space");
+  });
+  it("ut-4: throws with correct available MB in message", () => {
+    expect(() => assertDiskSpace(100 * 1024, 512)).toThrow("100 MB available");
   });
 });
 

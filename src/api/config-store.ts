@@ -11,6 +11,7 @@ export type AppConfig = {
   anthropic_api_key: string | null;
   mistral_api_key: string | null;
   auth_token: string | null;
+  max_concurrent_tasks: number;
   has_anthropic_key?: boolean;
   has_mistral_key?: boolean;
 };
@@ -18,7 +19,7 @@ export type AppConfig = {
 export function getConfig(): AppConfig {
   const db = getDb();
   const row = db.select().from(schema.config).where(eq(schema.config.id, 1)).get();
-  return row ?? { project_root: null, default_model: null, default_network_policy: "none", preferred_terminal: null, port: null, anthropic_api_key: null, mistral_api_key: null, auth_token: null };
+  return row ?? { project_root: null, default_model: null, default_network_policy: "none", preferred_terminal: null, port: null, anthropic_api_key: null, mistral_api_key: null, auth_token: null, max_concurrent_tasks: 10 };
 }
 
 export function setConfig(updates: Partial<AppConfig>) {

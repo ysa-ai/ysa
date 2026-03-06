@@ -37,6 +37,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
   const [model, setModel] = useState("claude-sonnet-4-6");
   const [networkPolicy, setNetworkPolicy] = useState<"none" | "strict">("strict");
   const [port, setPort] = useState("4000");
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState("10");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [mistralKey, setMistralKey] = useState("");
   const [anthropicKeyChanged, setAnthropicKeyChanged] = useState(false);
@@ -49,6 +50,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
     if (currentConfig.project_root) setProjectRoot(currentConfig.project_root);
     if (currentConfig.default_network_policy) setNetworkPolicy(currentConfig.default_network_policy as "none" | "strict");
     if (currentConfig.port) setPort(String(currentConfig.port));
+    if (currentConfig.max_concurrent_tasks) setMaxConcurrentTasks(String(currentConfig.max_concurrent_tasks));
     if (currentConfig.default_model) {
       const matchedProvider = Object.entries(MODELS_BY_PROVIDER).find(([, models]) =>
         models.some((m) => m.id === currentConfig.default_model)
@@ -82,6 +84,11 @@ export function Setup({ onComplete, onClose }: SetupProps) {
       setError("Port must be between 1024 and 65535");
       return;
     }
+    const parsedMaxConcurrent = parseInt(maxConcurrentTasks);
+    if (maxConcurrentTasks && (isNaN(parsedMaxConcurrent) || parsedMaxConcurrent < 1 || parsedMaxConcurrent > 100)) {
+      setError("Max concurrent tasks must be between 1 and 100");
+      return;
+    }
     if (anthropicKeyChanged && anthropicKey.trim()) {
       await setApiKey.mutateAsync({ provider: "anthropic", value: anthropicKey.trim() });
     }
@@ -93,6 +100,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
       default_model: model || null,
       default_network_policy: networkPolicy,
       port: port ? parsedPort : null,
+      max_concurrent_tasks: maxConcurrentTasks ? parsedMaxConcurrent : undefined,
     });
   };
 
@@ -120,7 +128,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
             disabled={pickDirectory.isPending}
             className="shrink-0 px-3.5 py-2.5 bg-bg-inset border border-border rounded-lg text-[12px] text-text-muted hover:text-text-primary hover:border-border-bright transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {pickDirectory.isPending ? "…" : "Browse"}
+            {pickDirectory.isPending ? "\u2026" : "Browse"}
           </button>
         </div>
         <p className="text-[12px] text-text-muted mt-1.5">Select an existing directory or create one first. Worktrees will be created under <span className="font-mono">.ysa/worktrees/</span> inside it.</p>
@@ -173,7 +181,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
           ))}
         </div>
         <p className="text-[12px] text-text-muted mt-1.5">
-          {networkPolicy === "none" ? "Full internet access inside the container." : "All traffic inspected via proxy — GET-only, entropy detection, rate limits."}
+          {networkPolicy === "none" ? "Full internet access inside the container." : "All traffic inspected via proxy \u2014 GET-only, entropy detection, rate limits."}
         </p>
       </div>
 
@@ -184,13 +192,13 @@ export function Setup({ onComplete, onClose }: SetupProps) {
         <div className="space-y-4">
           <div>
             <label className="block text-[12px] font-medium text-text-secondary mb-1.5">
-              Anthropic API key <span className="text-text-faint font-normal">(optional — only if not using OAuth)</span>
+              Anthropic API key <span className="text-text-faint font-normal">(optional \u2014 only if not using OAuth)</span>
             </label>
             <input
               type="password"
               value={anthropicKey}
               onChange={(e) => { setAnthropicKey(e.target.value); setAnthropicKeyChanged(true); }}
-              placeholder={currentConfig?.has_anthropic_key ? "Key configured — enter new value to update" : "sk-ant-..."}
+              placeholder={currentConfig?.has_anthropic_key ? "Key configured \u2014 enter new value to update" : "sk-ant-..."}
               className="w-full bg-bg-inset border border-border rounded-lg px-3.5 py-2.5 text-[13px] text-text-primary placeholder-text-faint focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all font-mono"
             />
           </div>
@@ -203,14 +211,14 @@ export function Setup({ onComplete, onClose }: SetupProps) {
               type="password"
               value={mistralKey}
               onChange={(e) => { setMistralKey(e.target.value); setMistralKeyChanged(true); }}
-              placeholder={currentConfig?.has_mistral_key ? "Key configured — enter new value to update" : "••••••••••••••••"}
+              placeholder={currentConfig?.has_mistral_key ? "Key configured \u2014 enter new value to update" : "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"}
               className="w-full bg-bg-inset border border-border rounded-lg px-3.5 py-2.5 text-[13px] text-text-primary placeholder-text-faint focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all font-mono"
             />
           </div>
         </div>
       </div>
 
-      {/* Port */}
+      {/* Port + concurrency */}
       <div className="border-t border-border pt-1">
         <p className="text-[11px] font-medium text-text-faint uppercase tracking-wide mb-4">Server</p>
         <div>
@@ -226,6 +234,21 @@ export function Setup({ onComplete, onClose }: SetupProps) {
             className="w-32 bg-bg-inset border border-border rounded-lg px-3.5 py-2.5 text-[13px] text-text-primary focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all font-mono"
           />
           {isSettings && <p className="text-[12px] text-text-muted mt-1.5">Restart the server after changing the port.</p>}
+        </div>
+
+        <div className="mt-4">
+          <label className="block text-[12px] font-medium text-text-secondary mb-1.5">
+            Max concurrent tasks <span className="text-text-faint font-normal">(default: 10)</span>
+          </label>
+          <input
+            type="number"
+            value={maxConcurrentTasks}
+            onChange={(e) => setMaxConcurrentTasks(e.target.value)}
+            min={1}
+            max={100}
+            className="w-32 bg-bg-inset border border-border rounded-lg px-3.5 py-2.5 text-[13px] text-text-primary focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all font-mono"
+          />
+          <p className="text-[12px] text-text-muted mt-1.5">Maximum number of tasks that can run simultaneously (1\u2013100).</p>
         </div>
       </div>
 
@@ -250,7 +273,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
     </form>
   );
 
-  // ── Settings modal ──────────────────────────────────────────────────────────
+  // \u2500\u2500 Settings modal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   if (isSettings) {
     return (
       <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto py-10">
@@ -271,7 +294,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
     );
   }
 
-  // ── First-run full-screen ───────────────────────────────────────────────────
+  // \u2500\u2500 First-run full-screen \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   return (
     <div className="min-h-screen bg-bg flex items-start justify-center overflow-y-auto py-16">
       <div className="w-full max-w-xl px-4">
@@ -291,19 +314,19 @@ export function Setup({ onComplete, onClose }: SetupProps) {
             <div className="space-y-3">
               {!deps.git && (
                 <div className="flex items-start gap-3">
-                  <span className="text-err mt-0.5">✕</span>
+                  <span className="text-err mt-0.5">\u2715</span>
                   <div>
                     <p className="text-[14px] font-medium text-text-primary font-mono">git</p>
-                    <p className="text-[13px] text-text-muted">Required for worktree isolation between tasks. <a href="https://git-scm.com/downloads" target="_blank" rel="noreferrer" className="text-primary hover:underline">Installation guide →</a></p>
+                    <p className="text-[13px] text-text-muted">Required for worktree isolation between tasks. <a href="https://git-scm.com/downloads" target="_blank" rel="noreferrer" className="text-primary hover:underline">Installation guide \u2192</a></p>
                   </div>
                 </div>
               )}
               {!deps.podman && (
                 <div className="flex items-start gap-3">
-                  <span className="text-err mt-0.5">✕</span>
+                  <span className="text-err mt-0.5">\u2715</span>
                   <div>
                     <p className="text-[14px] font-medium text-text-primary font-mono">podman</p>
-                    <p className="text-[13px] text-text-muted">Required to run sandboxed containers. <a href="https://podman.io/docs/installation" target="_blank" rel="noreferrer" className="text-primary hover:underline">Installation guide →</a></p>
+                    <p className="text-[13px] text-text-muted">Required to run sandboxed containers. <a href="https://podman.io/docs/installation" target="_blank" rel="noreferrer" className="text-primary hover:underline">Installation guide \u2192</a></p>
                   </div>
                 </div>
               )}
