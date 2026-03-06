@@ -80,6 +80,11 @@ RUN chmod +x /opt/proxy/oci-network-hook.sh
 
 USER agent
 
+# Install mise universal toolchain manager
+RUN curl https://mise.run | sh
+ENV PATH="/home/agent/.local/bin:$PATH"
+RUN mise --version
+
 # Lock down git against local config code execution attacks
 # GIT_CONFIG_COUNT/KEY/VALUE env vars override local .git/config
 # These take highest precedence (after -c flags) and cannot be overridden

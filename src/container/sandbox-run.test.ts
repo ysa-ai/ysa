@@ -16,3 +16,23 @@ describe("sandbox-run.sh", () => {
     expect(curlLine).toContain("--connect-timeout 5");
   });
 });
+
+describe("Containerfiles — mise", () => {
+  const containerfilePath = join(import.meta.dir, "../../container/Containerfile");
+  const containerfileContent = readFileSync(containerfilePath, "utf-8");
+
+  const containerfileMistralPath = join(import.meta.dir, "../../container/Containerfile.mistral");
+  const containerfileMistralContent = readFileSync(containerfileMistralPath, "utf-8");
+
+  it("ut-1: container/Containerfile contains all three mise install lines", () => {
+    expect(containerfileContent).toContain("curl https://mise.run | sh");
+    expect(containerfileContent).toContain('ENV PATH="/home/agent/.local/bin');
+    expect(containerfileContent).toContain("mise --version");
+  });
+
+  it("ut-2: container/Containerfile.mistral contains all three mise install lines", () => {
+    expect(containerfileMistralContent).toContain("curl https://mise.run | sh");
+    expect(containerfileMistralContent).toContain('ENV PATH="/home/agent/.local/bin');
+    expect(containerfileMistralContent).toContain("mise --version");
+  });
+});
