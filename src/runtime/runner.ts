@@ -98,6 +98,7 @@ export async function runTask(config: RunConfig): Promise<RunResult> {
     agentInitScript: containerConfig.initScript,
     agentAuthEnvFlags,
     extraPodEnv: `-e CONTEXT_ID=${taskId}`,
+    shadowDirs: config.shadowDirs,
   });
 
   const exitCode = await proc.exited;

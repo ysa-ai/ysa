@@ -31,6 +31,7 @@ export interface RunConfig {
   resumePrompt?: string; // custom prompt for session resume (refine)
   networkPolicy?: "none" | "strict" | "custom"; // default "none"
   promptUrl?: string; // URL for container to fetch prompt from
+  shadowDirs?: string[]; // dirs to shadow with per-task volumes (default: ["node_modules"])
 }
 
 // What runTask() returns
