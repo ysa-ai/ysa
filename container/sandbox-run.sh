@@ -14,6 +14,7 @@
 # Optional env vars:
 #   SANDBOX_TIMEOUT    -- container timeout in seconds (default: 3600)
 #   LOG_FILE           -- host path for output log (captured via tee)
+#   SHADOW_DIRS        -- space-separated workspace-relative dirs to shadow (default: node_modules)
 
 set -euo pipefail
 
@@ -92,11 +93,15 @@ GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 SESSION_VOLUME="task-session-${TASK_ID}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
 
-# -- node_modules volume -------------------------------------------------------
-# Shadow the worktree's node_modules with a container-specific named volume so
-# the container installs Linux-native binaries there without touching the host copy.
-NODE_MODULES_VOLUME="node-modules-${TASK_ID}"
-podman volume exists "$NODE_MODULES_VOLUME" 2>/dev/null || podman volume create "$NODE_MODULES_VOLUME" >/dev/null
+# -- Shadow volumes (platform-specific build artifacts) ------------------------
+# SHADOW_DIRS is a space-separated list of workspace-relative dirs to shadow with
+# per-task named volumes.  Default: node_modules (backward compatible).
+SHADOW_MOUNTS=""
+for dir in ${SHADOW_DIRS:-node_modules}; do
+  vol="shadow-$(echo "$dir" | tr '/' '-')-${TASK_ID}"
+  podman volume exists "$vol" 2>/dev/null || podman volume create "$vol" >/dev/null
+  SHADOW_MOUNTS="$SHADOW_MOUNTS --mount type=volume,src=$vol,dst=/workspace/$dir"
+done
 
 # -- Git worktree pointer ------------------------------------------------------
 # Write container-internal git pointers from the host before container starts,
@@ -270,7 +275,7 @@ podman run --rm \
   -e GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Sandbox Agent}" \
   -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-agent@sandbox}" \
   -v "$WORKTREE:/workspace:rw" \
-  --mount "type=volume,src=${NODE_MODULES_VOLUME},dst=/workspace/node_modules" \
+  $SHADOW_MOUNTS \
   -v "$REPO_MOUNT" \
   --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
   --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude" \
