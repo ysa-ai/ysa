@@ -18,8 +18,14 @@ const { port: PORT } = getServerConfig();
 const app = new Hono();
 
 app.use("/trpc/*", cors({
-  origin: [`http://localhost:4001`, `http://localhost:${PORT}`],
+  origin: [
+    `http://localhost:4001`,
+    `http://127.0.0.1:4001`,
+    `http://localhost:${PORT}`,
+    `http://127.0.0.1:${PORT}`,
+  ],
   allowHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
 }));
 app.use("/trpc/*", requireLocalToken);
 app.use(
