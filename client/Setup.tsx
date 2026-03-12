@@ -75,7 +75,14 @@ export function Setup({ onComplete, onClose }: SetupProps) {
   });
 
   const detectLanguagesMutation = trpc.config.detectLanguages.useMutation({
-    onSuccess: (data) => setLanguages(data.map((r) => r.language).filter((l) => l !== "unknown")),
+    onSuccess: (data) => {
+      const detected = data.map((r) => r.language).filter((l) => l !== "unknown");
+      if (detected.length > 0) {
+        setLanguages(detected);
+      } else {
+        setError("No recognized languages found at the project root. Select languages manually.");
+      }
+    },
     onError: (err) => setError(err.message),
   });
 
@@ -161,7 +168,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
           </label>
           <button
             type="button"
-            onClick={() => { if (projectRoot.trim()) detectLanguagesMutation.mutate({ path: projectRoot.trim() }); }}
+            onClick={() => { if (projectRoot.trim()) { setError(""); detectLanguagesMutation.mutate({ path: projectRoot.trim() }); } }}
             disabled={detectLanguagesMutation.isPending || !projectRoot.trim()}
             className="text-[11px] text-primary hover:text-primary/80 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
           >

@@ -86,6 +86,9 @@ export const configRouter = router({
   detectLanguages: publicProcedure
     .input(z.object({ path: z.string() }))
     .mutation(async ({ input }) => {
+      await access(input.path).catch(() => {
+        throw new Error(`Directory not found: ${input.path}`);
+      });
       const { detectAllLanguages } = await import("../runtime/detect-language");
       return detectAllLanguages(input.path);
     }),
