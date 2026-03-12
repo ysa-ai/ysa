@@ -6,3 +6,5 @@ export type { SpawnSandboxOpts } from "./container";
 export { parseOutput, buildClaudeCommand } from "./output";
 export { ensureProxy, stopProxy } from "./proxy";
 export type { ScopedAllowRule } from "./proxy";
+export { detectLanguage, getRegistryHostsForLanguage } from "./detect-language";
+export type { DetectedLanguage, LanguageDetectionResult } from "./detect-language";
