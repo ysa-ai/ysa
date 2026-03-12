@@ -5,16 +5,17 @@ import { join } from "path";
 const containerSrc = readFileSync(join(import.meta.dir, "container.ts"), "utf-8");
 
 describe("teardownContainer", () => {
-  it("ut-1: volume rm includes shadow-node_modules-${id} but not task-session-${id}", () => {
-    // Find the podman volume rm line(s) inside teardownContainer
+  it("ut-1: volume cleanup uses pattern-based grep, not hardcoded shadow-node_modules-", () => {
+    // Find the teardownContainer function body
     const teardownMatch = containerSrc.match(
       /export async function teardownContainer[\s\S]*?^}/m
     );
     expect(teardownMatch).not.toBeNull();
     const teardownBody = teardownMatch![0];
 
-    expect(teardownBody).toContain("shadow-node_modules-");
-    expect(teardownBody).not.toContain("task-session-");
+    expect(teardownBody).toContain("podman volume ls --format");
+    expect(teardownBody).toContain("grep -- '-");
+    expect(teardownBody).not.toContain("shadow-node_modules-");
   });
 });
 
