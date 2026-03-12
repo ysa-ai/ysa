@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { trpc } from "./trpc";
 
+const SUPPORTED_LANGUAGES = [
+  "node", "python", "go", "rust", "ruby", "php",
+  "java-maven", "java-gradle", "dotnet", "c-cpp", "swift", "elixir",
+] as const;
+
 const PROVIDERS = [
   { id: "claude", name: "Claude Code" },
   { id: "mistral", name: "Mistral Vibe" },
@@ -33,6 +38,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
   const { data: deps } = trpc.system.checkDeps.useQuery();
 
   const [projectRoot, setProjectRoot] = useState("");
+  const [languages, setLanguages] = useState<string[]>([]);
   const [provider, setProvider] = useState("claude");
   const [model, setModel] = useState("claude-sonnet-4-6");
   const [networkPolicy, setNetworkPolicy] = useState<"none" | "strict">("strict");
@@ -51,6 +57,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
     if (currentConfig.default_network_policy) setNetworkPolicy(currentConfig.default_network_policy as "none" | "strict");
     if (currentConfig.port) setPort(String(currentConfig.port));
     if (currentConfig.max_concurrent_tasks) setMaxConcurrentTasks(String(currentConfig.max_concurrent_tasks));
+    if (currentConfig.languages_list) setLanguages(currentConfig.languages_list);
     if (currentConfig.default_model) {
       const matchedProvider = Object.entries(MODELS_BY_PROVIDER).find(([, models]) =>
         models.some((m) => m.id === currentConfig.default_model)
@@ -67,12 +74,22 @@ export function Setup({ onComplete, onClose }: SetupProps) {
     onError: (err) => setError(err.message),
   });
 
+  const detectLanguagesMutation = trpc.config.detectLanguages.useMutation({
+    onSuccess: (data) => setLanguages(data.map((r) => r.language).filter((l) => l !== "unknown")),
+    onError: (err) => setError(err.message),
+  });
+
   const setApiKey = trpc.config.setApiKey.useMutation({
     onError: (err) => setError(err.message),
   });
 
   const pickDirectory = trpc.config.pickDirectory.useMutation({
-    onSuccess: (data) => { if (data.path) setProjectRoot(data.path); },
+    onSuccess: (data) => {
+      if (data.path) {
+        setProjectRoot(data.path);
+        detectLanguagesMutation.mutate({ path: data.path });
+      }
+    },
     onError: (err) => setError(err.message),
   });
 
@@ -101,6 +118,8 @@ export function Setup({ onComplete, onClose }: SetupProps) {
       default_network_policy: networkPolicy,
       port: port ? parsedPort : null,
       max_concurrent_tasks: maxConcurrentTasks ? parsedMaxConcurrent : undefined,
+      languages,
+      shadow_dirs: null,
     });
   };
 
@@ -132,6 +151,43 @@ export function Setup({ onComplete, onClose }: SetupProps) {
           </button>
         </div>
         <p className="text-[12px] text-text-muted mt-1.5">Select an existing directory or create one first. Worktrees will be created under <span className="font-mono">.ysa/worktrees/</span> inside it.</p>
+      </div>
+
+      {/* Languages */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="block text-[12px] font-medium text-text-secondary">
+            Languages{detectLanguagesMutation.isSuccess && <span className="text-text-faint font-normal ml-1">(auto-detected)</span>}
+          </label>
+          <button
+            type="button"
+            onClick={() => { if (projectRoot.trim()) detectLanguagesMutation.mutate({ path: projectRoot.trim() }); }}
+            disabled={detectLanguagesMutation.isPending || !projectRoot.trim()}
+            className="text-[11px] text-primary hover:text-primary/80 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+          >
+            {detectLanguagesMutation.isPending ? "Detecting\u2026" : "Detect"}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {SUPPORTED_LANGUAGES.map((lang) => {
+            const active = languages.includes(lang);
+            return (
+              <button
+                key={lang}
+                type="button"
+                onClick={() => setLanguages(active ? languages.filter((l) => l !== lang) : [...languages, lang])}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-mono border transition-all cursor-pointer ${
+                  active
+                    ? "bg-primary/10 border-primary/40 text-primary"
+                    : "bg-bg-inset border-border text-text-muted hover:border-border-bright"
+                }`}
+              >
+                {lang}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[12px] text-text-muted mt-1.5">Select all languages used in this project. Determines which build directories are isolated per task.</p>
       </div>
 
       {/* Provider */}

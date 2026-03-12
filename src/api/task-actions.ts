@@ -11,10 +11,23 @@ import { getProvider } from "../providers";
 import { ensureProxy } from "../runtime/proxy";
 import type { ScopedAllowRule } from "../runtime/proxy";
 import { getServerConfig, getOrCreateAuthToken, getConfig } from "./config-store";
+import type { AppConfig } from "./config-store";
 import type { RunConfig } from "../types";
+import { getShadowDirsForLanguages } from "../runtime/detect-language";
+import type { DetectedLanguage } from "../runtime/detect-language";
 import { writeAuditLog } from "../lib/audit";
 
 const MIN_DISK_MB = 512;
+
+export function resolveTaskShadowDirs(config?: AppConfig): string[] {
+  const c = config ?? getConfig();
+  if (c.shadow_dirs) {
+    try { return JSON.parse(c.shadow_dirs); } catch {}
+  }
+  let langs: DetectedLanguage[] = [];
+  try { langs = JSON.parse(c.languages ?? "[]"); } catch {}
+  return getShadowDirsForLanguages(langs);
+}
 
 export function assertConcurrencyLimit(activeCount: number, limit: number): void {
   if (activeCount >= limit) {
@@ -275,6 +288,7 @@ export const taskActionsRouter = router({
         allowedTools: input.allowedTools,
         networkPolicy,
         promptUrl,
+        shadowDirs: resolveTaskShadowDirs(),
       };
 
       // Update to running
@@ -400,6 +414,7 @@ export const taskActionsRouter = router({
         model: task.model ?? undefined,
         networkPolicy: taskNetworkPolicy,
         promptUrl,
+        shadowDirs: resolveTaskShadowDirs(),
       };
 
       runTask(config)
@@ -484,6 +499,7 @@ export const taskActionsRouter = router({
         model: task.model ?? undefined,
         resumeSessionId: task.session_id,
         networkPolicy: continueNetworkPolicy,
+        shadowDirs: resolveTaskShadowDirs(),
       };
 
       runTask(config)
@@ -577,6 +593,7 @@ export const taskActionsRouter = router({
         resumeSessionId: task.session_id,
         promptUrl,
         networkPolicy: refineNetworkPolicy,
+        shadowDirs: resolveTaskShadowDirs(),
       };
 
       runTask(config)
@@ -754,7 +771,7 @@ podman run --rm -it \\
       chmod +x /home/agent/.claude/hooks/sandbox-guard.sh 2>/dev/null
     fi
     if [ -f /home/agent/.claude.json ]; then
-      jq '.hasCompletedOnboarding = true | .projects[\\\\"/workspace\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
+      jq '.hasCompletedOnboarding = true | .projects[\\\\\"\\//workspace\\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
     else
       echo '{\\"hasCompletedOnboarding\\":true,\\"projects\\":{\\"\\//workspace\\":{\\"hasTrustDialogAccepted\\":true}}}' > /home/agent/.claude.json
     fi
