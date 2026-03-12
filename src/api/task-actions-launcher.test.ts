@@ -35,7 +35,7 @@ function buildLauncherScript(opts: {
   proxyEnv: string;
 }): string {
   const { taskId, tokenEnvPath, worktree, gitDir, worktreeName, sessionVolume, resumeFlag, seccompProfile, proxyEnv } = opts;
-  return `#!/bin/bash\nset -euo pipefail\n\n# Load credentials and remove the file immediately\n# shellcheck source=/dev/null\nsource ${shellescape(tokenEnvPath)}\nrm -f ${shellescape(tokenEnvPath)}\n\necho -e "\\033[90mStarting sandbox for task ${taskId.slice(0, 8)}...\\033[0m"\npodman rm -f "refine-${taskId}" 2>/dev/null || true\npodman run --rm -it \\\n  --name "refine-${taskId}" \\\n  --user 1001:1001 \\\n  --network slirp4netns \\\n  --add-host host.containers.internal:host-gateway \\\n  --cap-drop ALL \\\n  --security-opt no-new-privileges \\\n  --security-opt seccomp=${shellescape(seccompProfile)} \\\n  --read-only \\\n  --tmpfs /tmp:rw,nosuid,size=256m \\\n  --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \\\n  --memory 4g \\\n  --pids-limit 512 \\\n  --cpus 2 \\\n  -e CLAUDE_CODE_OAUTH_TOKEN \\\n  ${proxyEnv} \\\n  -v ${shellescape(worktree)}:/workspace:rw \\\n  -v ${shellescape(gitDir)}:/repo.git:rw \\\n  --tmpfs /home/agent:rw,nosuid,nodev,size=256m \\\n  --mount "type=volume,src=${sessionVolume},dst=/home/agent/.claude" \\\n  sandbox-claude \\\n  -c "\n    echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git\n    claude ${resumeFlag} --add-dir /workspace --dangerously-skip-permissions\n  "\n\n# Restore host worktree pointer\necho "gitdir: ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}" > ${shellescape(worktree)}/.git\necho ${shellescape(worktree)}/.git > ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}/gitdir\n`;
+  return `#!/bin/bash\nset -euo pipefail\n\n# Load credentials and remove the file immediately\n# shellcheck source=/dev/null\nsource ${shellescape(tokenEnvPath)}\nrm -f ${shellescape(tokenEnvPath)}\n\necho -e "\\033[90mStarting sandbox for task ${taskId.slice(0, 8)}...\\033[0m"\npodman volume exists "mise-installs" 2>/dev/null || podman volume create "mise-installs" >/dev/null\npodman rm -f "refine-${taskId}" 2>/dev/null || true\npodman run --rm -it \\\n  --name "refine-${taskId}" \\\n  --user 1001:1001 \\\n  --network slirp4netns \\\n  --add-host host.containers.internal:host-gateway \\\n  --cap-drop ALL \\\n  --security-opt no-new-privileges \\\n  --security-opt seccomp=${shellescape(seccompProfile)} \\\n  --read-only \\\n  --tmpfs /tmp:rw,nosuid,size=256m \\\n  --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \\\n  --memory 4g \\\n  --pids-limit 512 \\\n  --cpus 2 \\\n  -e CLAUDE_CODE_OAUTH_TOKEN \\\n  ${proxyEnv} \\\n  -v ${shellescape(worktree)}:/workspace:rw \\\n  -v ${shellescape(gitDir)}:/repo.git:rw \\\n  --tmpfs /home/agent:rw,nosuid,nodev,size=256m \\\n  --mount "type=volume,src=${sessionVolume},dst=/home/agent/.claude" \\\n  --mount "type=volume,src=mise-installs,dst=/home/agent/.local/share/mise/installs" \\\n  -e MISE_DATA_DIR=/home/agent/.local/share/mise \\\n  sandbox-claude \\\n  -c "\n    echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git\n    claude ${resumeFlag} --add-dir /workspace --dangerously-skip-permissions\n  "\n\n# Restore host worktree pointer\necho "gitdir: ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}" > ${shellescape(worktree)}/.git\necho ${shellescape(worktree)}/.git > ${shellescape(gitDir)}/worktrees/${shellescape(worktreeName)}/gitdir\n`;
 }
 
 describe("openTerminal launcher: file-system security", () => {
@@ -165,5 +165,24 @@ describe("openTerminal launcher: file-system security", () => {
     // Session volume must NOT be mounted as the full home directory
     expect(script).not.toMatch(/type=volume,src=task-session-[^,]+,dst=\/home\/agent["\\]/);
     expect(script).not.toContain(`,dst=/home/agent"`);
+  });
+
+  it("ut-3-mise: buildLauncherScript includes mise-installs volume mount and MISE_DATA_DIR", () => {
+    const script = buildLauncherScript({
+      taskId: TEST_TASK_ID,
+      tokenEnvPath,
+      worktree: "/fake/worktree",
+      gitDir: "/fake/project/.git",
+      worktreeName: TEST_TASK_ID,
+      sessionVolume: `task-session-${TEST_TASK_ID}`,
+      resumeFlag: "",
+      seccompProfile: "/usr/share/ysa/seccomp.json",
+      proxyEnv: "",
+    });
+
+    expect(script).toContain("mise-installs");
+    expect(script).toContain("dst=/home/agent/.local/share/mise/installs");
+    expect(script).toContain("MISE_DATA_DIR");
+    expect(script).toContain('podman volume exists "mise-installs"');
   });
 });

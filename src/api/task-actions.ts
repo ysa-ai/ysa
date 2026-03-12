@@ -721,6 +721,7 @@ source ${shellescape(tokenEnvPath)}
 rm -f ${shellescape(tokenEnvPath)}
 
 echo -e "\\033[90mStarting sandbox for task ${input.taskId.slice(0, 8)}...\\033[0m"
+podman volume exists "mise-installs" 2>/dev/null || podman volume create "mise-installs" >/dev/null
 podman rm -f "refine-${input.taskId}" 2>/dev/null || true
 podman run --rm -it \\
   --name "refine-${input.taskId}" \\
@@ -742,6 +743,8 @@ podman run --rm -it \\
   -v ${shellescape(gitDir)}:/repo.git:rw \\
   --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
   --mount "type=volume,src=${sessionVolume},dst=/home/agent/.claude" \\
+  --mount "type=volume,src=mise-installs,dst=/home/agent/.local/share/mise/installs" \\
+  -e MISE_DATA_DIR=/home/agent/.local/share/mise \\
   sandbox-claude \\
   -c "
     if [ ! -f /home/agent/.claude/settings.json ] && [ -f /etc/claude-defaults/settings.json ]; then
@@ -753,7 +756,7 @@ podman run --rm -it \\
     if [ -f /home/agent/.claude.json ]; then
       jq '.hasCompletedOnboarding = true | .projects[\\\\"/workspace\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
     else
-      echo '{\\"hasCompletedOnboarding\\":true,\\"projects\\":{\\"\\/workspace\\":{\\"hasTrustDialogAccepted\\":true}}}' > /home/agent/.claude.json
+      echo '{\\"hasCompletedOnboarding\\":true,\\"projects\\":{\\"\\//workspace\\":{\\"hasTrustDialogAccepted\\":true}}}' > /home/agent/.claude.json
     fi
 
     echo 'gitdir: /repo.git/worktrees/${worktreeName}' > /workspace/.git
