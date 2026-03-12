@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { access, readdir } from "fs/promises";
+import { access } from "fs/promises";
 import { join } from "path";
 import { router, publicProcedure } from "./init";
 import { getConfig, setConfig } from "./config-store";
@@ -13,7 +13,7 @@ async function pickDirectoryNative(): Promise<string | null> {
       { stdout: "pipe", stderr: "pipe" },
     );
     await proc.exited;
-    const out = (await new Response(proc.stdout).text()).trim();
+    const out = (await new Response(proc.stdout).text()).trim().replace(/\/+$/, "");
     return out || null;
   }
   // Linux: try zenity, then kdialog
@@ -24,7 +24,7 @@ async function pickDirectoryNative(): Promise<string | null> {
     try {
       const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
       await proc.exited;
-      const out = (await new Response(proc.stdout).text()).trim();
+      const out = (await new Response(proc.stdout).text()).trim().replace(/\/+$/, "");
       if (out) return out;
     } catch {}
   }
@@ -86,13 +86,12 @@ export const configRouter = router({
   detectLanguages: publicProcedure
     .input(z.object({ path: z.string() }))
     .mutation(async ({ input }) => {
-      await access(input.path).catch(() => {
-        throw new Error(`Directory not found: ${input.path}`);
+      const normalizedPath = input.path.replace(/\/+$/, "");
+      await access(normalizedPath).catch(() => {
+        throw new Error(`Directory not found: ${normalizedPath}`);
       });
-      const entries = await readdir(input.path).catch(() => [] as string[]);
-      console.log(`[detectLanguages] path=${JSON.stringify(input.path)} entries=${JSON.stringify(entries.slice(0, 30))}`);
       const { detectAllLanguages } = await import("../runtime/detect-language");
-      return detectAllLanguages(input.path);
+      return detectAllLanguages(normalizedPath);
     }),
 
   setApiKey: publicProcedure
