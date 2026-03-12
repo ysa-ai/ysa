@@ -58,7 +58,6 @@ export const configRouter = router({
         port: z.number().int().min(1024).max(65535).nullable().optional(),
         max_concurrent_tasks: z.number().int().min(1).max(100).optional(),
         languages: z.array(z.string()).optional(),
-        shadow_dirs: z.string().nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -70,10 +69,9 @@ export const configRouter = router({
         }
       }
       const existing = getConfig();
-      const { languages, shadow_dirs, ...rest } = input;
+      const { languages, ...rest } = input;
       const updates: Record<string, unknown> = { ...rest };
       if (languages !== undefined) updates.languages = JSON.stringify(languages);
-      if (shadow_dirs !== undefined) updates.shadow_dirs = shadow_dirs;
       setConfig(updates);
       if (languages !== undefined && JSON.stringify(languages) !== (existing.languages ?? "[]")) {
         Bun.spawn(["podman", "volume", "rm", "mise-installs"], { stdout: "ignore", stderr: "ignore" });

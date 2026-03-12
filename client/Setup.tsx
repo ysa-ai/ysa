@@ -126,7 +126,6 @@ export function Setup({ onComplete, onClose }: SetupProps) {
       port: port ? parsedPort : null,
       max_concurrent_tasks: maxConcurrentTasks ? parsedMaxConcurrent : undefined,
       languages,
-      shadow_dirs: null,
     });
   };
 

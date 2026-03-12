@@ -1,1 +1,1 @@
-ALTER TABLE config ADD COLUMN shadow_dirs TEXT;
+SELECT 1;

@@ -21,9 +21,6 @@ const MIN_DISK_MB = 512;
 
 export function resolveTaskShadowDirs(config?: AppConfig): string[] {
   const c = config ?? getConfig();
-  if (c.shadow_dirs) {
-    try { return JSON.parse(c.shadow_dirs); } catch {}
-  }
   let langs: DetectedLanguage[] = [];
   try { langs = JSON.parse(c.languages ?? "[]"); } catch {}
   return getShadowDirsForLanguages(langs);

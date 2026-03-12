@@ -66,27 +66,16 @@ const baseConfig: AppConfig = {
   auth_token: null,
   max_concurrent_tasks: 10,
   languages: "[]",
-  shadow_dirs: null,
 };
 
 describe("resolveTaskShadowDirs", () => {
-  it("ut-6: returns language-preset dirs when shadow_dirs is null", () => {
-    const config: AppConfig = { ...baseConfig, languages: '["node"]', shadow_dirs: null };
+  it("ut-6: returns language-preset dirs for configured languages", () => {
+    const config: AppConfig = { ...baseConfig, languages: '["node"]' };
     expect(resolveTaskShadowDirs(config)).toEqual(["node_modules"]);
   });
 
-  it("ut-6: returns empty array when languages is empty and shadow_dirs is null", () => {
-    const config: AppConfig = { ...baseConfig, languages: "[]", shadow_dirs: null };
-    expect(resolveTaskShadowDirs(config)).toEqual([]);
-  });
-
-  it("ut-7: returns shadow_dirs override when set, ignoring language presets", () => {
-    const config: AppConfig = { ...baseConfig, languages: '["node"]', shadow_dirs: '["custom_dir"]' };
-    expect(resolveTaskShadowDirs(config)).toEqual(["custom_dir"]);
-  });
-
-  it("ut-7: returns shadow_dirs override even when empty array", () => {
-    const config: AppConfig = { ...baseConfig, languages: '["rust"]', shadow_dirs: "[]" };
+  it("ut-6: returns empty array when languages is empty", () => {
+    const config: AppConfig = { ...baseConfig, languages: "[]" };
     expect(resolveTaskShadowDirs(config)).toEqual([]);
   });
 });
