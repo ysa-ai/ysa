@@ -305,6 +305,12 @@ podman run --rm \
       fi
     fi
 
+    # Install project toolchain via mise if declared
+    if [ -f /workspace/.mise.toml ] || [ -f /workspace/.tool-versions ]; then
+      _progress 'Installing runtimes via mise...'
+      mise install --cd /workspace --yes 2>/dev/null || true
+    fi
+
     AGENT_BIN=\"\${AGENT_BINARY:-claude}\"
 
     # Prompt handling: -p means args are self-contained; --resume without -p fetches prompt from PROMPT_URL
