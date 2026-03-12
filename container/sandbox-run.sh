@@ -318,6 +318,8 @@ podman run --rm \
       _progress 'Installing project-pinned runtimes via mise...'
       mise install --cd /workspace --yes 2>/dev/null || true
     fi
+    # 3. Add mise shims to PATH so installed tools are available to the agent
+    export PATH="\$HOME/.local/share/mise/shims:\$PATH"
 
     AGENT_BIN=\"\${AGENT_BINARY:-claude}\"
 
