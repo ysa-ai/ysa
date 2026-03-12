@@ -32,6 +32,7 @@ export interface RunConfig {
   networkPolicy?: "none" | "strict" | "custom"; // default "none"
   promptUrl?: string; // URL for container to fetch prompt from
   shadowDirs?: string[]; // dirs to shadow with per-task volumes (default: ["node_modules"])
+  miseTools?: string[]; // mise tool names to install in the sandbox (e.g. ["go", "node"])
 }
 
 // What runTask() returns

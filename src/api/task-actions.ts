@@ -13,7 +13,7 @@ import type { ScopedAllowRule } from "../runtime/proxy";
 import { getServerConfig, getOrCreateAuthToken, getConfig } from "./config-store";
 import type { AppConfig } from "./config-store";
 import type { RunConfig } from "../types";
-import { getShadowDirsForLanguages } from "../runtime/detect-language";
+import { getShadowDirsForLanguages, getMiseToolsForLanguages } from "../runtime/detect-language";
 import type { DetectedLanguage } from "../runtime/detect-language";
 import { writeAuditLog } from "../lib/audit";
 
@@ -27,6 +27,13 @@ export function resolveTaskShadowDirs(config?: AppConfig): string[] {
   let langs: DetectedLanguage[] = [];
   try { langs = JSON.parse(c.languages ?? "[]"); } catch {}
   return getShadowDirsForLanguages(langs);
+}
+
+export function resolveTaskMiseTools(config?: AppConfig): string[] {
+  const c = config ?? getConfig();
+  let langs: DetectedLanguage[] = [];
+  try { langs = JSON.parse(c.languages ?? "[]"); } catch {}
+  return getMiseToolsForLanguages(langs);
 }
 
 export function assertConcurrencyLimit(activeCount: number, limit: number): void {
@@ -289,6 +296,7 @@ export const taskActionsRouter = router({
         networkPolicy,
         promptUrl,
         shadowDirs: resolveTaskShadowDirs(),
+        miseTools: resolveTaskMiseTools(),
       };
 
       // Update to running
@@ -415,6 +423,7 @@ export const taskActionsRouter = router({
         networkPolicy: taskNetworkPolicy,
         promptUrl,
         shadowDirs: resolveTaskShadowDirs(),
+        miseTools: resolveTaskMiseTools(),
       };
 
       runTask(config)
@@ -500,6 +509,7 @@ export const taskActionsRouter = router({
         resumeSessionId: task.session_id,
         networkPolicy: continueNetworkPolicy,
         shadowDirs: resolveTaskShadowDirs(),
+        miseTools: resolveTaskMiseTools(),
       };
 
       runTask(config)
@@ -594,6 +604,7 @@ export const taskActionsRouter = router({
         promptUrl,
         networkPolicy: refineNetworkPolicy,
         shadowDirs: resolveTaskShadowDirs(),
+        miseTools: resolveTaskMiseTools(),
       };
 
       runTask(config)

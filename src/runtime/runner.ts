@@ -99,6 +99,7 @@ export async function runTask(config: RunConfig): Promise<RunResult> {
     agentAuthEnvFlags,
     extraPodEnv: `-e CONTEXT_ID=${taskId}`,
     shadowDirs: config.shadowDirs,
+    miseTools: config.miseTools,
   });
 
   const exitCode = await proc.exited;

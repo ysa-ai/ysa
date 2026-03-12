@@ -149,6 +149,31 @@ export function getShadowDirsForLanguages(langs: DetectedLanguage[]): string[] {
   return [...dirs];
 }
 
+const MISE_TOOL_MAP: Partial<Record<DetectedLanguage, string>> = {
+  node: "node",
+  python: "python",
+  go: "go",
+  rust: "rust",
+  ruby: "ruby",
+  "java-maven": "java",
+  "java-gradle": "java",
+  dotnet: "dotnet",
+  swift: "swift",
+  elixir: "elixir",
+  // php: no stable mise plugin by default
+  // "c-cpp": no runtime to install
+  // unknown: nothing
+};
+
+export function getMiseToolsForLanguages(langs: DetectedLanguage[]): string[] {
+  const tools = new Set<string>();
+  for (const lang of langs) {
+    const tool = MISE_TOOL_MAP[lang];
+    if (tool) tools.add(tool);
+  }
+  return [...tools];
+}
+
 const REGISTRY_HOSTS: Partial<Record<DetectedLanguage, string[]>> = {
   node: ["registry.npmjs.org", "registry.yarnpkg.com"],
   python: ["pypi.org", "files.pythonhosted.org"],

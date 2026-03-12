@@ -48,6 +48,7 @@ export interface SpawnSandboxOpts {
   provider?: string;          // provider id, used for session ID extraction
   extraPodEnv?: string;       // opaque "-e KEY=val -e KEY2=val2" string forwarded verbatim to podman run
   shadowDirs?: string[];      // forwarded as SHADOW_DIRS env var to sandbox-run.sh
+  miseTools?: string[];       // forwarded as MISE_TOOLS env var to sandbox-run.sh
 }
 
 export function spawnSandbox(opts: SpawnSandboxOpts) {
@@ -60,6 +61,7 @@ export function spawnSandbox(opts: SpawnSandboxOpts) {
   if (opts.agentImage) env.AGENT_IMAGE = opts.agentImage;
   if (opts.extraPodEnv) env.EXTRA_POD_ENV = opts.extraPodEnv;
   if (opts.shadowDirs && opts.shadowDirs.length > 0) env.SHADOW_DIRS = opts.shadowDirs.join(" ");
+  if (opts.miseTools && opts.miseTools.length > 0) env.MISE_TOOLS = opts.miseTools.join(" ");
 
   return Bun.spawn(
     [

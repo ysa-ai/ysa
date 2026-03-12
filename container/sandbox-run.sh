@@ -305,9 +305,17 @@ podman run --rm \
       fi
     fi
 
-    # Install project toolchain via mise if declared
+    # Install runtimes via mise
+    # 1. Install language runtimes from MISE_TOOLS (set by ysa from languages config)
+    if [ -n "\${MISE_TOOLS:-}" ]; then
+      _progress 'Installing language runtimes via mise...'
+      for _tool in \$MISE_TOOLS; do
+        mise use --global "\${_tool}@latest" --yes 2>/dev/null || true
+      done
+    fi
+    # 2. Project .mise.toml / .tool-versions takes precedence (version pinning)
     if [ -f /workspace/.mise.toml ] || [ -f /workspace/.tool-versions ]; then
-      _progress 'Installing runtimes via mise...'
+      _progress 'Installing project-pinned runtimes via mise...'
       mise install --cd /workspace --yes 2>/dev/null || true
     fi
 
