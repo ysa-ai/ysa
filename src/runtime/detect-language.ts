@@ -112,6 +112,11 @@ const RULES: DetectionRule[] = [
   },
 ];
 
+export const SUPPORTED_LANGUAGES = [
+  "node", "python", "go", "rust", "ruby", "php",
+  "java-maven", "java-gradle", "dotnet", "c-cpp", "swift", "elixir", "unknown",
+] as const satisfies DetectedLanguage[];
+
 export async function detectLanguage(worktreeRoot: string): Promise<LanguageDetectionResult> {
   for (const rule of RULES) {
     if (await rule.check(worktreeRoot)) {
@@ -119,6 +124,29 @@ export async function detectLanguage(worktreeRoot: string): Promise<LanguageDete
     }
   }
   return { language: "unknown", shadowDirs: ["node_modules"] };
+}
+
+export async function detectAllLanguages(root: string): Promise<LanguageDetectionResult[]> {
+  const results: LanguageDetectionResult[] = [];
+  for (const rule of RULES) {
+    if (await rule.check(root)) {
+      results.push({ language: rule.language, shadowDirs: rule.shadowDirs });
+    }
+  }
+  if (results.length === 0) {
+    return [{ language: "unknown", shadowDirs: ["node_modules"] }];
+  }
+  return results;
+}
+
+export function getShadowDirsForLanguages(langs: DetectedLanguage[]): string[] {
+  const dirs = new Set<string>();
+  for (const rule of RULES) {
+    if ((langs as string[]).includes(rule.language)) {
+      for (const d of rule.shadowDirs) dirs.add(d);
+    }
+  }
+  return [...dirs];
 }
 
 const REGISTRY_HOSTS: Partial<Record<DetectedLanguage, string[]>> = {

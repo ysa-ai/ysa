@@ -54,3 +54,4 @@ export interface CoreConfig {
 }
 
 export type { ParsedOutput, ParsedLogEntry } from "./providers/types";
+export type { DetectedLanguage as Language } from "./runtime/detect-language";

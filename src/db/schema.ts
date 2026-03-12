@@ -40,4 +40,6 @@ export const config = sqliteTable("config", {
   mistral_api_key: text("mistral_api_key"),
   auth_token: text("auth_token"),
   max_concurrent_tasks: integer("max_concurrent_tasks").notNull().default(10),
+  languages: text("languages").notNull().default("[]"),
+  shadow_dirs: text("shadow_dirs"),
 });

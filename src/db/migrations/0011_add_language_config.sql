@@ -1,0 +1,2 @@
+ALTER TABLE config ADD COLUMN languages TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE config ADD COLUMN shadow_dirs TEXT;

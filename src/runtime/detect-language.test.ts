@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "path";
 import { mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-import { detectLanguage, getRegistryHostsForLanguage } from "./detect-language";
+import { detectLanguage, detectAllLanguages, getShadowDirsForLanguages, getRegistryHostsForLanguage } from "./detect-language";
 
 let tmpDir: string;
 
@@ -103,6 +103,36 @@ describe("detectLanguage", () => {
     await writeFile(join(tmpDir, "go.mod"), "");
     await writeFile(join(tmpDir, "package.json"), "{}");
     expect(await detectLanguage(tmpDir)).toEqual({ language: "go", shadowDirs: [] });
+  });
+});
+
+describe("detectAllLanguages", () => {
+  it("ut-1: returns multiple results for a Go+Node monorepo", async () => {
+    await writeFile(join(tmpDir, "go.mod"), "");
+    await writeFile(join(tmpDir, "package.json"), "{}");
+    const results = await detectAllLanguages(tmpDir);
+    expect(results.length).toBe(2);
+    expect(results.map((r) => r.language)).toContain("go");
+    expect(results.map((r) => r.language)).toContain("node");
+  });
+
+  it("ut-2: returns unknown fallback when no markers are present", async () => {
+    const results = await detectAllLanguages(tmpDir);
+    expect(results).toEqual([{ language: "unknown", shadowDirs: ["node_modules"] }]);
+  });
+});
+
+describe("getShadowDirsForLanguages", () => {
+  it("ut-3: returns deduped union for rust and node", () => {
+    expect(getShadowDirsForLanguages(["rust", "node"])).toEqual(["target", "node_modules"]);
+  });
+
+  it("ut-4: returns empty array for empty input", () => {
+    expect(getShadowDirsForLanguages([])).toEqual([]);
+  });
+
+  it("ut-5: returns empty array for go (no shadow dirs)", () => {
+    expect(getShadowDirsForLanguages(["go"])).toEqual([]);
   });
 });
 

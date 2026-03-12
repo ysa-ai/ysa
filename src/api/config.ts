@@ -38,7 +38,9 @@ export const configRouter = router({
       hasApiKey("anthropic"),
       hasApiKey("mistral"),
     ]);
-    return { ...config, has_anthropic_key, has_mistral_key };
+    let languages_list: string[] = [];
+    try { languages_list = JSON.parse(config.languages ?? "[]"); } catch {}
+    return { ...config, has_anthropic_key, has_mistral_key, languages_list };
   }),
 
   pickDirectory: publicProcedure.mutation(async () => {
@@ -55,6 +57,8 @@ export const configRouter = router({
         preferred_terminal: z.string().nullable().optional(),
         port: z.number().int().min(1024).max(65535).nullable().optional(),
         max_concurrent_tasks: z.number().int().min(1).max(100).optional(),
+        languages: z.array(z.string()).optional(),
+        shadow_dirs: z.string().nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -65,10 +69,25 @@ export const configRouter = router({
           await proc.exited;
         }
       }
-      setConfig(input);
+      const existing = getConfig();
+      const { languages, shadow_dirs, ...rest } = input;
+      const updates: Record<string, unknown> = { ...rest };
+      if (languages !== undefined) updates.languages = JSON.stringify(languages);
+      if (shadow_dirs !== undefined) updates.shadow_dirs = shadow_dirs;
+      setConfig(updates);
+      if (languages !== undefined && JSON.stringify(languages) !== (existing.languages ?? "[]")) {
+        Bun.spawn(["podman", "volume", "rm", "mise-installs"], { stdout: "ignore", stderr: "ignore" });
+      }
       const changedKeys = Object.keys(input).filter((k) => (input as Record<string, unknown>)[k] !== undefined);
       writeAuditLog("config.set", { keys: changedKeys });
       return getConfig();
+    }),
+
+  detectLanguages: publicProcedure
+    .input(z.object({ path: z.string() }))
+    .mutation(async ({ input }) => {
+      const { detectAllLanguages } = await import("../runtime/detect-language");
+      return detectAllLanguages(input.path);
     }),
 
   setApiKey: publicProcedure
