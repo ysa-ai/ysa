@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { access } from "fs/promises";
+import { access, readdir } from "fs/promises";
 import { join } from "path";
 import { router, publicProcedure } from "./init";
 import { getConfig, setConfig } from "./config-store";
@@ -89,6 +89,8 @@ export const configRouter = router({
       await access(input.path).catch(() => {
         throw new Error(`Directory not found: ${input.path}`);
       });
+      const entries = await readdir(input.path).catch(() => [] as string[]);
+      console.log(`[detectLanguages] path=${JSON.stringify(input.path)} entries=${JSON.stringify(entries.slice(0, 30))}`);
       const { detectAllLanguages } = await import("../runtime/detect-language");
       return detectAllLanguages(input.path);
     }),
