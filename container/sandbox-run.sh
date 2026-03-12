@@ -93,6 +93,9 @@ GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 SESSION_VOLUME="task-session-${TASK_ID}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
 
+# -- mise installs shared cache ------------------------------------------------
+podman volume exists "mise-installs" 2>/dev/null || podman volume create "mise-installs" >/dev/null
+
 # -- Shadow volumes (platform-specific build artifacts) ------------------------
 # SHADOW_DIRS is a space-separated list of workspace-relative dirs to shadow with
 # per-task named volumes.  Default: node_modules (backward compatible).
@@ -274,11 +277,13 @@ podman run --rm \
   -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-agent@sandbox}" \
   -e GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Sandbox Agent}" \
   -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-agent@sandbox}" \
+  -e MISE_DATA_DIR=/home/agent/.local/share/mise \
   -v "$WORKTREE:/workspace:rw" \
   $SHADOW_MOUNTS \
   -v "$REPO_MOUNT" \
   --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
   --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude" \
+  --mount "type=volume,src=mise-installs,dst=/home/agent/.local/share/mise/installs" \
   -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
   "$IMAGE" \
   -c "
