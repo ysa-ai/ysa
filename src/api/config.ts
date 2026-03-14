@@ -9,6 +9,7 @@ import { writeAuditLog } from "../lib/audit";
 import { installRuntimes, rebuildSandboxImage } from "../runtime/container";
 import { getMiseToolsForLanguages } from "../runtime/detect-language";
 import type { DetectedLanguage } from "../runtime/detect-language";
+import { startBuild } from "../lib/build-manager";
 import { initDb } from "../db";
 import { runMigrations } from "../db/migrate";
 
@@ -109,34 +110,32 @@ export const configRouter = router({
       if (worktree_files !== undefined) updates.worktree_files = JSON.stringify(worktree_files);
       setConfig(updates);
 
-      let runtimes_ok: boolean | null = null;
-      let runtimes_error: string | undefined;
+      let building = false;
       if (languages !== undefined && JSON.stringify(languages) !== (existing.languages ?? "[]")) {
-        // Drop the old volume so stale binaries don't linger
-        const proc = Bun.spawn(["podman", "volume", "rm", "mise-installs"], { stdout: "ignore", stderr: "ignore" });
-        await proc.exited;
-        // Re-populate with the new language set. Awaited so the caller can show
-        // a loader and inform the user the runtime volume is being set up.
         let langs: DetectedLanguage[] = [];
         try { langs = languages as DetectedLanguage[]; } catch {}
         const { tools, env, runtimeEnv, apkPackages, copyDirs } = getMiseToolsForLanguages(langs);
-        if (apkPackages.length > 0) {
-          const result = await rebuildSandboxImage(apkPackages);
-          runtimes_ok = result.ok;
-          runtimes_error = result.error;
-        }
-        if (tools.length > 0 && runtimes_ok !== false) {
-          const result = await installRuntimes(tools, "mise-installs", "sandbox-claude", env, runtimeEnv, copyDirs);
-          runtimes_ok = result.ok;
-          runtimes_error = result.error;
-        } else if (apkPackages.length === 0) {
-          runtimes_ok = true;
+        if (apkPackages.length > 0 || tools.length > 0) {
+          building = true;
+          startBuild(async (onLog) => {
+            // Drop stale volume
+            const rm = Bun.spawn(["podman", "volume", "rm", "mise-installs"], { stdout: "ignore", stderr: "ignore" });
+            await rm.exited;
+            if (apkPackages.length > 0) {
+              const result = await rebuildSandboxImage(apkPackages, "sandbox-claude", onLog);
+              if (!result.ok) return result;
+            }
+            if (tools.length > 0) {
+              return installRuntimes(tools, "mise-installs", "sandbox-claude", env, runtimeEnv, copyDirs, onLog);
+            }
+            return { ok: true };
+          });
         }
       }
 
       const changedKeys = Object.keys(input).filter((k) => (input as Record<string, unknown>)[k] !== undefined);
       writeAuditLog("config.set", { keys: changedKeys });
-      return { ...getConfig(), runtimes_ok, runtimes_error };
+      return { ...getConfig(), runtimes_ok: building ? null : true, runtimes_error: undefined };
     }),
 
   detectLanguages: publicProcedure

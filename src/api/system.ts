@@ -1,5 +1,6 @@
 import { router, publicProcedure } from "./init";
 import { getResourceMetrics } from "../lib/resources";
+import { getBuildState } from "../lib/build-manager";
 import { stat } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
@@ -67,4 +68,5 @@ export const systemRouter = router({
   resources: publicProcedure.query(() => getResourceMetrics()),
   detectTerminals: publicProcedure.query(() => detectTerminals()),
   checkDeps: publicProcedure.query(() => checkDeps()),
+  buildStatus: publicProcedure.query(() => getBuildState()),
 });

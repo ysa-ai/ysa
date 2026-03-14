@@ -54,6 +54,13 @@ function Main() {
 
   const { data: resources } = trpc.system.resources.useQuery(undefined, { refetchInterval: 5000 });
 
+  const { data: buildState, refetch: refetchBuildStatus } = trpc.system.buildStatus.useQuery(undefined, {
+    refetchInterval: (query) => {
+      const s = (query.state.data as { status: string } | undefined)?.status;
+      return s === "building" ? 500 : 5000;
+    },
+  });
+
   const invalidate = () => utils.tasks.invalidate();
 
   const runMutation = trpc.taskActions.run.useMutation({
@@ -153,7 +160,7 @@ function Main() {
     <>
     {settingsOpen && (
       <Setup
-        onComplete={() => { utils.config.invalidate(); setSettingsOpen(false); }}
+        onComplete={() => { utils.config.invalidate(); setSettingsOpen(false); refetchBuildStatus(); }}
         onClose={() => setSettingsOpen(false)}
       />
     )}
@@ -195,6 +202,7 @@ function Main() {
       onToggleStatus={toggleStatus}
       resourceMetrics={resources?.metrics}
       resourceStale={resources?.stale}
+      buildState={buildState ?? null}
     />
     </>
   );

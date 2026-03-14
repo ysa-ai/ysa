@@ -147,3 +147,13 @@ body {
   text-align: left;
 }
 .result-markdown th { background: var(--color-bg-surface); font-weight: 600; }
+
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--color-primary) 40%, color-mix(in srgb, var(--color-primary) 60%, white) 50%, var(--color-primary) 60%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s linear infinite;
+}

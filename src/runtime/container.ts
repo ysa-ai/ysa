@@ -34,22 +34,52 @@ const CONTAINER_DIR = resolve(import.meta.dir, "..", "..", "container");
 // Rebuild the sandbox-claude image with optional apk packages (e.g. ["php", "ruby"]).
 // Generates a fresh CA cert, builds with --build-arg EXTRA_PACKAGES, then cleans up.
 // Heavy layers are cached by Podman — only the apk step reruns, so this is fast.
+async function streamLines(
+  stream: ReadableStream<Uint8Array>,
+  onLine: (line: string) => void,
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split(/\r?\n|\r/);
+    buf = lines.pop() ?? "";
+    for (const line of lines) { if (line.trim()) onLine(line); }
+  }
+  if (buf.trim()) onLine(buf);
+}
+
 export async function rebuildSandboxImage(
   apkPackages: string[],
   image: string = "sandbox-claude",
+  onLog?: (line: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
   const caScript = resolve(CONTAINER_DIR, "generate-ca.sh");
   const caGen = await runShell(`bash "${caScript}" "${CONTAINER_DIR}"`);
   if (!caGen.ok) return { ok: false, error: `CA generation failed: ${caGen.stderr}` };
 
   const extraPackages = apkPackages.join(" ");
-  const result = await runShell(
-    `podman build -t ${image} --build-arg EXTRA_PACKAGES="${extraPackages}" -f "${CONTAINER_DIR}/Containerfile" "${CONTAINER_DIR}/"`,
-  );
+  const proc = Bun.spawn([
+    "podman", "build", "-t", image,
+    "--build-arg", `EXTRA_PACKAGES=${extraPackages}`,
+    "-f", `${CONTAINER_DIR}/Containerfile`,
+    `${CONTAINER_DIR}/`,
+  ], { stdout: "pipe", stderr: "pipe" });
+
+  const errLines: string[] = [];
+  await Promise.all([
+    streamLines(proc.stdout, (line) => { onLog?.(line); }),
+    streamLines(proc.stderr, (line) => { onLog?.(line); errLines.push(line); }),
+    proc.exited,
+  ]);
 
   await runShell(`rm -f "${CONTAINER_DIR}/ca.pem" "${CONTAINER_DIR}/ca-key.pem"`);
 
-  return { ok: result.ok, error: result.ok ? undefined : result.stderr };
+  const ok = proc.exitCode === 0;
+  return { ok, error: ok ? undefined : errLines.join("\n").trim() };
 }
 
 // Install language runtimes into a named mise-installs volume via a short-lived
@@ -63,6 +93,7 @@ export async function installRuntimes(
   extraEnv: Record<string, string> = {},
   runtimeEnv: Record<string, string> = {},
   copyDirs: string[] = [],
+  onLog?: (line: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
   if (tools.length === 0) return { ok: true };
 
@@ -103,12 +134,15 @@ export async function installRuntimes(
     "-c", script,
   ], { stdout: "pipe", stderr: "pipe" });
 
-  const [stderr, exitCode] = await Promise.all([
-    new Response(proc.stderr).text(),
+  const errLines: string[] = [];
+  await Promise.all([
+    streamLines(proc.stdout, (line) => { onLog?.(line); }),
+    streamLines(proc.stderr, (line) => { onLog?.(line); errLines.push(line); }),
     proc.exited,
   ]);
 
-  return { ok: exitCode === 0, error: exitCode !== 0 ? stderr.trim() : undefined };
+  const ok = proc.exitCode === 0;
+  return { ok, error: ok ? undefined : errLines.join("\n").trim() };
 }
 
 export interface SpawnSandboxOpts {

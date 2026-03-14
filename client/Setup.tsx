@@ -82,12 +82,8 @@ export function Setup({ onComplete, onClose }: SetupProps) {
   }, [currentConfig]);
 
   const setConfig = trpc.config.set.useMutation({
-    onSuccess: (data) => {
+    onSuccess: () => {
       setInstallingRuntimes(false);
-      if (data.runtimes_ok === false) {
-        setError(`Runtime installation failed: ${data.runtimes_error ?? "unknown error"}`);
-        return;
-      }
       onComplete();
     },
     onError: (err) => {
@@ -396,13 +392,6 @@ export function Setup({ onComplete, onClose }: SetupProps) {
           </button>
         </div>
       </div>
-
-      {installingRuntimes && (
-        <div className="bg-primary/5 border border-primary/20 rounded-lg px-4 py-3">
-          <p className="text-[12px] font-medium text-primary">Installing language runtimes…</p>
-          <p className="text-[12px] text-text-muted mt-0.5">This can take several minutes depending on the number of languages selected. Please wait.</p>
-        </div>
-      )}
 
       {error && <p className="text-[12px] text-err">{error}</p>}
 
