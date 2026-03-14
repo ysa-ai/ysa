@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TaskList } from "./TaskList";
 import { TaskInput } from "./TaskInput";
+import { BuildProgress } from "./BuildProgress";
 import { TaskDetail } from "./TaskDetail";
 import { StatusFilter } from "./StatusFilter";
 import { ResourceBar } from "./ResourceBar";
 import type { TaskData } from "./TaskRow";
 import type { ResourceMetrics } from "../lib/resource-poller";
+import type { BuildState } from "../lib/build-manager";
 
 interface CoreAppProps {
   tasks: TaskData[];
@@ -29,6 +31,7 @@ interface CoreAppProps {
   onToggleStatus: (status: string) => void;
   resourceMetrics?: ResourceMetrics | null;
   resourceStale?: boolean;
+  buildState?: BuildState | null;
 }
 
 export function CoreApp({
@@ -53,6 +56,7 @@ export function CoreApp({
   onToggleStatus,
   resourceMetrics,
   resourceStale,
+  buildState,
 }: CoreAppProps) {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     if (typeof window !== "undefined") {
@@ -154,7 +158,11 @@ export function CoreApp({
           </button>
         </div>
 
-        <TaskInput onRun={onRun} isPending={isRunPending} textareaRef={inputRef} />
+        {buildState && (buildState.status === "building" || buildState.status === "error") ? (
+          <BuildProgress step={buildState.step} progress={buildState.progress} status={buildState.status} />
+        ) : (
+          <TaskInput onRun={onRun} isPending={isRunPending} textareaRef={inputRef} />
+        )}
 
         {statusCounts.length > 0 && (
           <div className="shrink-0 px-6 py-2.5 border-b border-border">

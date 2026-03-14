@@ -93,8 +93,10 @@ GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 SESSION_VOLUME="task-session-${TASK_ID}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
 
-# -- mise installs shared cache ------------------------------------------------
-podman volume exists "mise-installs" 2>/dev/null || podman volume create "mise-installs" >/dev/null
+# -- mise installs volume ------------------------------------------------------
+# Pre-populated at project settings save time (not at task launch).
+# MISE_VOLUME is set by the caller; defaults to mise-installs for single-project setups.
+MISE_VOLUME="${MISE_VOLUME:-mise-installs}"
 
 # -- Shadow volumes (platform-specific build artifacts) ------------------------
 # SHADOW_DIRS is a space-separated list of workspace-relative dirs to shadow with
@@ -283,12 +285,17 @@ podman run --rm \
   -v "$REPO_MOUNT" \
   --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
   --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude" \
-  --mount "type=volume,src=mise-installs,dst=/home/agent/.local/share/mise/installs" \
+  --mount "type=volume,src=${MISE_VOLUME},dst=/home/agent/.local/share/mise/installs" \
   -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
   "$IMAGE" \
   -c "
     # Progress helper (JSON to stdout -> tee -> LOG_FILE)
     _progress() { printf '{\"type\":\"system\",\"subtype\":\"progress\",\"message\":\"%s\"}\\n' \"\$1\"; }
+
+    # Remove mise from the tmpfs so the agent cannot call or reinstall it.
+    # --tmpfs /home/agent copies image content into the tmpfs (Podman behaviour),
+    # so the binary is present at startup and must be explicitly removed here.
+    rm -f /home/agent/.local/bin/mise 2>/dev/null || true
 
     # Provider-specific init (settings files, config, onboarding bypass, etc.)
     # AGENT_INIT_SCRIPT is set by the caller; falls back to Claude defaults if unset.
@@ -305,10 +312,15 @@ podman run --rm \
       fi
     fi
 
-    # Install project toolchain via mise if declared
-    if [ -f /workspace/.mise.toml ] || [ -f /workspace/.tool-versions ]; then
-      _progress 'Installing runtimes via mise...'
-      mise install --cd /workspace --yes 2>/dev/null || true
+    # Activate pre-installed runtimes. Binaries were installed into the
+    # mise-installs volume by the pre-start container. mise is not present here.
+    _bin_paths_file=/home/agent/.local/share/mise/installs/.bin-paths
+    if [ -s \"\$_bin_paths_file\" ]; then
+      export PATH=\"\$(cat \"\$_bin_paths_file\"):\$PATH\"
+    fi
+    _tool_env_file=/home/agent/.local/share/mise/installs/.tool-env
+    if [ -s \"\$_tool_env_file\" ]; then
+      . \"\$_tool_env_file\"
     fi
 
     AGENT_BIN=\"\${AGENT_BINARY:-claude}\"

@@ -32,6 +32,8 @@ export interface RunConfig {
   networkPolicy?: "none" | "strict" | "custom"; // default "none"
   promptUrl?: string; // URL for container to fetch prompt from
   shadowDirs?: string[]; // dirs to shadow with per-task volumes (default: ["node_modules"])
+  miseVolume?: string;  // pre-populated mise-installs volume to mount (set at project settings save time)
+  worktreeFiles?: string[]; // untracked files to copy from project root into worktree
 }
 
 // What runTask() returns
@@ -54,3 +56,4 @@ export interface CoreConfig {
 }
 
 export type { ParsedOutput, ParsedLogEntry } from "./providers/types";
+export type { DetectedLanguage as Language } from "./runtime/detect-language";

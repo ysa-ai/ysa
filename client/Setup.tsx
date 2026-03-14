@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { trpc } from "./trpc";
 
+const SUPPORTED_LANGUAGES = [
+  "node", "python", "go", "rust", "ruby", "php",
+  "java-maven", "java-gradle", "dotnet", "c-cpp", "elixir",
+] as const;
+
 const PROVIDERS = [
   { id: "claude", name: "Claude Code" },
   { id: "mistral", name: "Mistral Vibe" },
@@ -33,16 +38,26 @@ export function Setup({ onComplete, onClose }: SetupProps) {
   const { data: deps } = trpc.system.checkDeps.useQuery();
 
   const [projectRoot, setProjectRoot] = useState("");
+  const [languages, setLanguages] = useState<string[]>([]);
   const [provider, setProvider] = useState("claude");
   const [model, setModel] = useState("claude-sonnet-4-6");
   const [networkPolicy, setNetworkPolicy] = useState<"none" | "strict">("strict");
   const [port, setPort] = useState("4000");
   const [maxConcurrentTasks, setMaxConcurrentTasks] = useState("10");
+  const [worktreeFiles, setWorktreeFiles] = useState<string[]>([]);
   const [anthropicKey, setAnthropicKey] = useState("");
   const [mistralKey, setMistralKey] = useState("");
   const [anthropicKeyChanged, setAnthropicKeyChanged] = useState(false);
   const [mistralKeyChanged, setMistralKeyChanged] = useState(false);
   const [error, setError] = useState("");
+  const [installingRuntimes, setInstallingRuntimes] = useState(false);
+
+  useEffect(() => {
+    if (!isSettings || !onClose) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isSettings, onClose]);
 
   // Pre-populate from existing config in settings mode
   useEffect(() => {
@@ -51,6 +66,10 @@ export function Setup({ onComplete, onClose }: SetupProps) {
     if (currentConfig.default_network_policy) setNetworkPolicy(currentConfig.default_network_policy as "none" | "strict");
     if (currentConfig.port) setPort(String(currentConfig.port));
     if (currentConfig.max_concurrent_tasks) setMaxConcurrentTasks(String(currentConfig.max_concurrent_tasks));
+    if (currentConfig.languages_list) setLanguages(currentConfig.languages_list);
+    if (currentConfig.worktree_files) {
+      try { setWorktreeFiles(JSON.parse(currentConfig.worktree_files)); } catch {}
+    }
     if (currentConfig.default_model) {
       const matchedProvider = Object.entries(MODELS_BY_PROVIDER).find(([, models]) =>
         models.some((m) => m.id === currentConfig.default_model)
@@ -63,7 +82,25 @@ export function Setup({ onComplete, onClose }: SetupProps) {
   }, [currentConfig]);
 
   const setConfig = trpc.config.set.useMutation({
-    onSuccess: () => onComplete(),
+    onSuccess: () => {
+      setInstallingRuntimes(false);
+      onComplete();
+    },
+    onError: (err) => {
+      setInstallingRuntimes(false);
+      setError(err.message);
+    },
+  });
+
+  const detectLanguagesMutation = trpc.config.detectLanguages.useMutation({
+    onSuccess: (data) => {
+      const detected = data.map((r) => r.language).filter((l) => l !== "unknown");
+      if (detected.length > 0) {
+        setLanguages(detected);
+      } else {
+        setError("No recognized languages found at the project root. Select languages manually.");
+      }
+    },
     onError: (err) => setError(err.message),
   });
 
@@ -72,9 +109,36 @@ export function Setup({ onComplete, onClose }: SetupProps) {
   });
 
   const pickDirectory = trpc.config.pickDirectory.useMutation({
-    onSuccess: (data) => { if (data.path) setProjectRoot(data.path); },
+    onSuccess: (data) => {
+      if (data.path) {
+        setProjectRoot(data.path);
+        detectLanguagesMutation.mutate({ path: data.path });
+      }
+    },
     onError: (err) => setError(err.message),
   });
+
+  const pickFileOrFolder = trpc.config.pickFileOrFolder.useMutation({
+    onError: (err) => setError(err.message),
+  });
+
+  const [pickingWorktreeFile, setPickingWorktreeFile] = useState(false);
+  const browseWorktreeFile = () => {
+    setPickingWorktreeFile(true);
+    pickFileOrFolder.mutate(undefined, {
+      onSuccess: (data) => {
+        if (data.path) {
+          const root = projectRoot.replace(/\/+$/, "");
+          const relative = root && data.path.startsWith(root + "/")
+            ? data.path.slice(root.length + 1)
+            : data.path;
+          setWorktreeFiles((prev) => [...prev, relative]);
+        }
+        setPickingWorktreeFile(false);
+      },
+      onError: () => setPickingWorktreeFile(false),
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,12 +159,16 @@ export function Setup({ onComplete, onClose }: SetupProps) {
     if (mistralKeyChanged && mistralKey.trim()) {
       await setApiKey.mutateAsync({ provider: "mistral", value: mistralKey.trim() });
     }
+    const languagesChanged = JSON.stringify([...languages].sort()) !== JSON.stringify([...(currentConfig?.languages_list ?? [])].sort());
+    if (languagesChanged && languages.length > 0) setInstallingRuntimes(true);
     setConfig.mutate({
       project_root: projectRoot.trim(),
       default_model: model || null,
       default_network_policy: networkPolicy,
       port: port ? parsedPort : null,
       max_concurrent_tasks: maxConcurrentTasks ? parsedMaxConcurrent : undefined,
+      languages,
+      worktree_files: worktreeFiles,
     });
   };
 
@@ -132,6 +200,43 @@ export function Setup({ onComplete, onClose }: SetupProps) {
           </button>
         </div>
         <p className="text-[12px] text-text-muted mt-1.5">Select an existing directory or create one first. Worktrees will be created under <span className="font-mono">.ysa/worktrees/</span> inside it.</p>
+      </div>
+
+      {/* Languages */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="block text-[12px] font-medium text-text-secondary">
+            Languages{detectLanguagesMutation.isSuccess && <span className="text-text-faint font-normal ml-1">(auto-detected)</span>}
+          </label>
+          <button
+            type="button"
+            onClick={() => { if (projectRoot.trim()) { setError(""); detectLanguagesMutation.mutate({ path: projectRoot.trim() }); } }}
+            disabled={detectLanguagesMutation.isPending || !projectRoot.trim()}
+            className="text-[11px] text-primary hover:text-primary/80 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+          >
+            {detectLanguagesMutation.isPending ? "Detecting\u2026" : "Detect"}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {SUPPORTED_LANGUAGES.map((lang) => {
+            const active = languages.includes(lang);
+            return (
+              <button
+                key={lang}
+                type="button"
+                onClick={() => setLanguages(active ? languages.filter((l) => l !== lang) : [...languages, lang])}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-mono border transition-all cursor-pointer ${
+                  active
+                    ? "bg-primary/10 border-primary/40 text-primary"
+                    : "bg-bg-inset border-border text-text-muted hover:border-border-bright"
+                }`}
+              >
+                {lang}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[12px] text-text-muted mt-1.5">Select all languages used in this project. Determines which build directories are isolated per task.</p>
       </div>
 
       {/* Provider */}
@@ -252,6 +357,42 @@ export function Setup({ onComplete, onClose }: SetupProps) {
         </div>
       </div>
 
+      {/* Worktree files */}
+      <div className="border-t border-border pt-1">
+        <p className="text-[11px] font-medium text-text-faint uppercase tracking-wide mb-4">Worktree files</p>
+        <p className="text-[12px] text-text-muted mb-3">Files or folders copied from the project root into each worktree before the agent starts. Useful for local config or state not committed to git (e.g. <span className="font-mono">.ysa</span>).</p>
+        <div className="space-y-1.5">
+          {worktreeFiles.map((file, idx) => (
+            <div key={idx} className="flex gap-2 items-center">
+              <input
+                type="text"
+                value={file}
+                onChange={(e) => setWorktreeFiles((prev) => prev.map((v, i) => i === idx ? e.target.value : v))}
+                className="flex-1 min-w-0 bg-bg-inset border border-border rounded-lg px-3.5 py-2 text-[13px] text-text-primary placeholder-text-faint focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all font-mono"
+                placeholder=".ysa"
+              />
+              <button
+                type="button"
+                onClick={() => setWorktreeFiles((prev) => prev.filter((_, i) => i !== idx))}
+                className="shrink-0 p-1.5 rounded-md text-text-faint hover:text-err hover:bg-err-bg transition-colors cursor-pointer"
+                title="Remove"
+              >
+                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={browseWorktreeFile}
+            disabled={pickingWorktreeFile}
+            className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-primary transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+            {pickingWorktreeFile ? "Browsing…" : "Add"}
+          </button>
+        </div>
+      </div>
+
       {error && <p className="text-[12px] text-err">{error}</p>}
 
       <div className="flex gap-3 pt-1">
@@ -267,7 +408,7 @@ export function Setup({ onComplete, onClose }: SetupProps) {
             setConfig.isPending ? "opacity-50 cursor-not-allowed" : "hover:brightness-110 cursor-pointer"
           }`}
         >
-          {setConfig.isPending ? "Saving..." : isSettings ? "Save" : "Get started"}
+          {installingRuntimes ? "Installing runtimes…" : setConfig.isPending ? "Saving…" : isSettings ? "Save" : "Get started"}
         </button>
       </div>
     </form>

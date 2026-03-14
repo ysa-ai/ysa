@@ -11,10 +11,35 @@ import { getProvider } from "../providers";
 import { ensureProxy } from "../runtime/proxy";
 import type { ScopedAllowRule } from "../runtime/proxy";
 import { getServerConfig, getOrCreateAuthToken, getConfig } from "./config-store";
+import type { AppConfig } from "./config-store";
 import type { RunConfig } from "../types";
+import { getShadowDirsForLanguages, getMiseToolsForLanguages } from "../runtime/detect-language";
+import type { DetectedLanguage } from "../runtime/detect-language";
 import { writeAuditLog } from "../lib/audit";
 
 const MIN_DISK_MB = 512;
+
+export function resolveTaskShadowDirs(config?: AppConfig): string[] {
+  const c = config ?? getConfig();
+  let langs: DetectedLanguage[] = [];
+  try { langs = JSON.parse(c.languages ?? "[]"); } catch {}
+  return getShadowDirsForLanguages(langs);
+}
+
+export function resolveTaskWorktreeFiles(): string[] {
+  const c = getConfig();
+  try { return JSON.parse(c.worktree_files ?? "[]"); } catch { return []; }
+}
+
+// Returns the pre-populated mise volume name if languages are configured, undefined otherwise.
+// The volume is created at project settings save time, not at task launch.
+export function resolveTaskMiseVolume(): string | undefined {
+  const c = getConfig();
+  let langs: DetectedLanguage[] = [];
+  try { langs = JSON.parse(c.languages ?? "[]"); } catch {}
+  const { tools } = getMiseToolsForLanguages(langs);
+  return tools.length > 0 ? "mise-installs" : undefined;
+}
 
 export function assertConcurrencyLimit(activeCount: number, limit: number): void {
   if (activeCount >= limit) {
@@ -275,6 +300,9 @@ export const taskActionsRouter = router({
         allowedTools: input.allowedTools,
         networkPolicy,
         promptUrl,
+        shadowDirs: resolveTaskShadowDirs(),
+        miseVolume: resolveTaskMiseVolume(),
+        worktreeFiles: resolveTaskWorktreeFiles(),
       };
 
       // Update to running
@@ -400,6 +428,9 @@ export const taskActionsRouter = router({
         model: task.model ?? undefined,
         networkPolicy: taskNetworkPolicy,
         promptUrl,
+        shadowDirs: resolveTaskShadowDirs(),
+        miseVolume: resolveTaskMiseVolume(),
+        worktreeFiles: resolveTaskWorktreeFiles(),
       };
 
       runTask(config)
@@ -484,6 +515,9 @@ export const taskActionsRouter = router({
         model: task.model ?? undefined,
         resumeSessionId: task.session_id,
         networkPolicy: continueNetworkPolicy,
+        shadowDirs: resolveTaskShadowDirs(),
+        miseVolume: resolveTaskMiseVolume(),
+        worktreeFiles: resolveTaskWorktreeFiles(),
       };
 
       runTask(config)
@@ -577,6 +611,9 @@ export const taskActionsRouter = router({
         resumeSessionId: task.session_id,
         promptUrl,
         networkPolicy: refineNetworkPolicy,
+        shadowDirs: resolveTaskShadowDirs(),
+        miseVolume: resolveTaskMiseVolume(),
+        worktreeFiles: resolveTaskWorktreeFiles(),
       };
 
       runTask(config)
@@ -754,7 +791,7 @@ podman run --rm -it \\
       chmod +x /home/agent/.claude/hooks/sandbox-guard.sh 2>/dev/null
     fi
     if [ -f /home/agent/.claude.json ]; then
-      jq '.hasCompletedOnboarding = true | .projects[\\\\"/workspace\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
+      jq '.hasCompletedOnboarding = true | .projects[\\\\\"\\//workspace\\\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
     else
       echo '{\\"hasCompletedOnboarding\\":true,\\"projects\\":{\\"\\//workspace\\":{\\"hasTrustDialogAccepted\\":true}}}' > /home/agent/.claude.json
     fi

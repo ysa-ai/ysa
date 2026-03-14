@@ -49,8 +49,8 @@ export async function runTask(config: RunConfig): Promise<RunResult> {
       };
     }
 
-    // 2. Prepare worktree (copy .mcp.json, env files)
-    await prepareWorktree(worktree, config.projectRoot);
+    // 2. Prepare worktree (copy .mcp.json, env files, worktree files)
+    await prepareWorktree(worktree, config.projectRoot, undefined, undefined, config.worktreeFiles);
   }
 
   // 3. Resolve adapter + get auth
@@ -99,6 +99,7 @@ export async function runTask(config: RunConfig): Promise<RunResult> {
     agentAuthEnvFlags,
     extraPodEnv: `-e CONTEXT_ID=${taskId}`,
     shadowDirs: config.shadowDirs,
+    miseVolume: config.miseVolume,
   });
 
   const exitCode = await proc.exited;

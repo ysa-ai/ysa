@@ -71,6 +71,34 @@
       "when": 1771200009000,
       "tag": "0010_add_max_concurrent_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1771200010000,
+      "tag": "0011_add_language_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1771200011000,
+      "tag": "0012_add_shadow_dirs",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1771200012000,
+      "tag": "0013_drop_shadow_dirs",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1771200013000,
+      "tag": "0014_add_worktree_files",
+      "breakpoints": true
     }
   ]
 }

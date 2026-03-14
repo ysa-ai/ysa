@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
-import { shellescape, assertConcurrencyLimit, assertDiskSpace } from "./task-actions";
+import { shellescape, assertConcurrencyLimit, assertDiskSpace, resolveTaskShadowDirs } from "./task-actions";
 import { join } from "path";
+import type { AppConfig } from "./config-store";
 
 describe("shellescape", () => {
   it("ut-1: wraps empty string in single quotes", () => {
@@ -51,6 +52,32 @@ describe("assertDiskSpace", () => {
   });
   it("ut-4: throws with correct available MB in message", () => {
     expect(() => assertDiskSpace(100 * 1024, 512)).toThrow("100 MB available");
+  });
+});
+
+const baseConfig: AppConfig = {
+  project_root: null,
+  default_model: null,
+  default_network_policy: "none",
+  preferred_terminal: null,
+  port: null,
+  anthropic_api_key: null,
+  mistral_api_key: null,
+  auth_token: null,
+  max_concurrent_tasks: 10,
+  languages: "[]",
+  worktree_files: null,
+};
+
+describe("resolveTaskShadowDirs", () => {
+  it("ut-6: returns language-preset dirs for configured languages", () => {
+    const config: AppConfig = { ...baseConfig, languages: '["node"]' };
+    expect(resolveTaskShadowDirs(config)).toEqual(["node_modules"]);
+  });
+
+  it("ut-6: returns empty array when languages is empty", () => {
+    const config: AppConfig = { ...baseConfig, languages: "[]" };
+    expect(resolveTaskShadowDirs(config)).toEqual([]);
   });
 });
 
