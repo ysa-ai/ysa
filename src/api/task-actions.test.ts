@@ -66,6 +66,7 @@ const baseConfig: AppConfig = {
   auth_token: null,
   max_concurrent_tasks: 10,
   languages: "[]",
+  worktree_files: null,
 };
 
 describe("resolveTaskShadowDirs", () => {

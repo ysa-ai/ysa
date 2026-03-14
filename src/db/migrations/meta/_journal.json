@@ -92,6 +92,13 @@
       "when": 1771200012000,
       "tag": "0013_drop_shadow_dirs",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1771200013000,
+      "tag": "0014_add_worktree_files",
+      "breakpoints": true
     }
   ]
 }

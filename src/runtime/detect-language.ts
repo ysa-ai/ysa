@@ -149,29 +149,76 @@ export function getShadowDirsForLanguages(langs: DetectedLanguage[]): string[] {
   return [...dirs];
 }
 
-const MISE_TOOL_MAP: Partial<Record<DetectedLanguage, string>> = {
-  node: "node",
-  python: "python",
-  go: "go",
-  rust: "rust",
-  ruby: "ruby",
-  "java-maven": "java",
-  "java-gradle": "java",
-  dotnet: "dotnet",
-  swift: "swift",
-  elixir: "elixir",
-  // php: no stable mise plugin by default
-  // "c-cpp": no runtime to install
+interface MiseToolSpec {
+  tool?: string;
+  installEnv?: Record<string, string>;
+  runtimeEnv?: Record<string, string>;
+  apkPackages?: string[];
+  postInstallCopy?: string[];
+}
+
+const MISE_INSTALLS = "/home/agent/.local/share/mise/installs";
+
+// Values are mise tool specs passed directly to `mise use --global`.
+// Use major-version pins (e.g. "python@3") to ensure mise picks a stable release
+// that has pre-compiled musl binaries available — "latest" can resolve to a
+// cutting-edge version not yet in the precompiled list, causing a silent fallback
+// to source compilation (pyenv/python-build) which fails in the Alpine sandbox.
+const MISE_TOOL_MAP: Partial<Record<DetectedLanguage, MiseToolSpec>> = {
+  node: { tool: "node@22" },
+  python: { tool: "python@3.13", installEnv: { MISE_PYTHON_COMPILE: "0" } },
+  go: { tool: "go@1" },
+  rust: {
+    tool: "rust@1",
+    installEnv: {
+      CARGO_HOME: `${MISE_INSTALLS}/.cargo`,
+      RUSTUP_HOME: `${MISE_INSTALLS}/.rustup`,
+    },
+    runtimeEnv: {
+      CARGO_HOME: `${MISE_INSTALLS}/.cargo`,
+      RUSTUP_HOME: `${MISE_INSTALLS}/.rustup`,
+    },
+  },
+  ruby: { apkPackages: ["ruby", "ruby-dev"] },
+  php: { apkPackages: ["php", "php-phar", "php-openssl"] },
+  "java-maven": { apkPackages: ["openjdk21-jdk", "maven"] },
+  "java-gradle": { apkPackages: ["openjdk21-jdk", "gradle"] },
+  dotnet: {
+    tool: "dotnet@8",
+    postInstallCopy: ["dotnet-root"],
+    runtimeEnv: { DOTNET_ROOT: `${MISE_INSTALLS}/dotnet-root` },
+  },
+  // swift: not supported on Alpine (no apk package, no swift.org binary for musl/aarch64)
+  elixir: { apkPackages: ["elixir"] }, // elixir apk pulls in erlang automatically
+  "c-cpp": { apkPackages: ["g++"] }, // gcc is in the base image; g++ is a separate apk package
   // unknown: nothing
 };
 
-export function getMiseToolsForLanguages(langs: DetectedLanguage[]): string[] {
+export interface MiseInstallSpec {
+  tools: string[];
+  env: Record<string, string>;
+  runtimeEnv: Record<string, string>;
+  apkPackages: string[];
+  copyDirs: string[];
+}
+
+export function getMiseToolsForLanguages(langs: DetectedLanguage[]): MiseInstallSpec {
   const tools = new Set<string>();
+  const env: Record<string, string> = {};
+  const runtimeEnv: Record<string, string> = {};
+  const apkPackages = new Set<string>();
+  const copyDirs = new Set<string>();
   for (const lang of langs) {
-    const tool = MISE_TOOL_MAP[lang];
-    if (tool) tools.add(tool);
+    const spec = MISE_TOOL_MAP[lang];
+    if (spec) {
+      if (spec.tool) tools.add(spec.tool);
+      if (spec.installEnv) Object.assign(env, spec.installEnv);
+      if (spec.runtimeEnv) Object.assign(runtimeEnv, spec.runtimeEnv);
+      if (spec.apkPackages) spec.apkPackages.forEach(p => apkPackages.add(p));
+      if (spec.postInstallCopy) spec.postInstallCopy.forEach(d => copyDirs.add(d));
+    }
   }
-  return [...tools];
+  return { tools: [...tools], env, runtimeEnv, apkPackages: [...apkPackages], copyDirs: [...copyDirs] };
 }
 
 const REGISTRY_HOSTS: Partial<Record<DetectedLanguage, string[]>> = {

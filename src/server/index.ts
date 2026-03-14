@@ -4,13 +4,23 @@ import { serveStatic } from "hono/bun";
 import { trpcServer } from "@hono/trpc-server";
 import { coreRouter } from "../api";
 import { runMigrations } from "../db/migrate";
-import { getServerConfig, getOrCreateAuthToken } from "../api/config-store";
+import { getServerConfig, getOrCreateAuthToken, YSA_DIR } from "../api/config-store";
 import { requireLocalToken } from "./auth";
 import { startResourcePoller } from "../lib/resources";
 import { stopProxy } from "../runtime/proxy";
+import { initDb } from "../db";
 import { join } from "path";
+import { existsSync, readFileSync } from "fs";
 
-runMigrations();
+// Bootstrap: find project root from pointer file written by config.set
+const ACTIVE_PROJECT_FILE = join(YSA_DIR, "active-project");
+if (existsSync(ACTIVE_PROJECT_FILE)) {
+  const projectRoot = readFileSync(ACTIVE_PROJECT_FILE, "utf-8").trim();
+  if (projectRoot) {
+    initDb(projectRoot);
+    runMigrations(join(projectRoot, ".ysa", "core.db"));
+  }
+}
 startResourcePoller();
 
 const { port: PORT } = getServerConfig();

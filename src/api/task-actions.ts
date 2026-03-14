@@ -26,11 +26,19 @@ export function resolveTaskShadowDirs(config?: AppConfig): string[] {
   return getShadowDirsForLanguages(langs);
 }
 
-export function resolveTaskMiseTools(config?: AppConfig): string[] {
-  const c = config ?? getConfig();
+export function resolveTaskWorktreeFiles(): string[] {
+  const c = getConfig();
+  try { return JSON.parse(c.worktree_files ?? "[]"); } catch { return []; }
+}
+
+// Returns the pre-populated mise volume name if languages are configured, undefined otherwise.
+// The volume is created at project settings save time, not at task launch.
+export function resolveTaskMiseVolume(): string | undefined {
+  const c = getConfig();
   let langs: DetectedLanguage[] = [];
   try { langs = JSON.parse(c.languages ?? "[]"); } catch {}
-  return getMiseToolsForLanguages(langs);
+  const { tools } = getMiseToolsForLanguages(langs);
+  return tools.length > 0 ? "mise-installs" : undefined;
 }
 
 export function assertConcurrencyLimit(activeCount: number, limit: number): void {
@@ -293,7 +301,8 @@ export const taskActionsRouter = router({
         networkPolicy,
         promptUrl,
         shadowDirs: resolveTaskShadowDirs(),
-        miseTools: resolveTaskMiseTools(),
+        miseVolume: resolveTaskMiseVolume(),
+        worktreeFiles: resolveTaskWorktreeFiles(),
       };
 
       // Update to running
@@ -420,7 +429,8 @@ export const taskActionsRouter = router({
         networkPolicy: taskNetworkPolicy,
         promptUrl,
         shadowDirs: resolveTaskShadowDirs(),
-        miseTools: resolveTaskMiseTools(),
+        miseVolume: resolveTaskMiseVolume(),
+        worktreeFiles: resolveTaskWorktreeFiles(),
       };
 
       runTask(config)
@@ -506,7 +516,8 @@ export const taskActionsRouter = router({
         resumeSessionId: task.session_id,
         networkPolicy: continueNetworkPolicy,
         shadowDirs: resolveTaskShadowDirs(),
-        miseTools: resolveTaskMiseTools(),
+        miseVolume: resolveTaskMiseVolume(),
+        worktreeFiles: resolveTaskWorktreeFiles(),
       };
 
       runTask(config)
@@ -601,7 +612,8 @@ export const taskActionsRouter = router({
         promptUrl,
         networkPolicy: refineNetworkPolicy,
         shadowDirs: resolveTaskShadowDirs(),
-        miseTools: resolveTaskMiseTools(),
+        miseVolume: resolveTaskMiseVolume(),
+        worktreeFiles: resolveTaskWorktreeFiles(),
       };
 
       runTask(config)

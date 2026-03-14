@@ -128,6 +128,7 @@ export async function prepareWorktree(
   projectRoot: string,
   envFiles?: string[],
   mcpConfigPath?: string | null,
+  worktreeFiles?: string[],
 ): Promise<void> {
   // Copy .mcp.json into worktree for MCP server discovery
   const mcpSrc = mcpConfigPath || join(projectRoot, ".mcp.json");
@@ -144,6 +145,25 @@ export async function prepareWorktree(
         const dst = join(worktreePath, envFile);
         const dstDir = join(worktreePath, ...envFile.split("/").slice(0, -1));
         await mkdir(dstDir, { recursive: true });
+        await Bun.write(dst, await readFile(src));
+      }
+    }
+  }
+
+  // Copy untracked files/dirs configured to be available in worktrees
+  if (worktreeFiles) {
+    for (const entry of worktreeFiles) {
+      const src = join(projectRoot, entry);
+      if (!await fileExists(src)) continue;
+      const info = await stat(src);
+      const dst = join(worktreePath, entry);
+      if (info.isDirectory()) {
+        const parentParts = entry.split("/").slice(0, -1);
+        if (parentParts.length > 0) await mkdir(join(worktreePath, ...parentParts), { recursive: true });
+        await runShell(`cp -r ${src} ${dst}`);
+      } else {
+        const parts = entry.split("/").slice(0, -1);
+        if (parts.length > 0) await mkdir(join(worktreePath, ...parts), { recursive: true });
         await Bun.write(dst, await readFile(src));
       }
     }

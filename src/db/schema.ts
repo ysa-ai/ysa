@@ -41,4 +41,5 @@ export const config = sqliteTable("config", {
   auth_token: text("auth_token"),
   max_concurrent_tasks: integer("max_concurrent_tasks").notNull().default(10),
   languages: text("languages").notNull().default("[]"),
+  worktree_files: text("worktree_files"),
 });
