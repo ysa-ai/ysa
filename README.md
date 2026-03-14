@@ -1,8 +1,6 @@
 # Your Secure Agent
 
 > **Early development** — this repo is under active development. Expect breaking changes between releases.
->
-> **Language support** — currently optimized for JavaScript/TypeScript projects (Node.js/Bun). The sandbox and `node_modules` isolation are built around the JS ecosystem. Support for additional languages (Python, Go, Rust, Ruby, Java, C#, and more) is planned via [mise](https://mise.jdx.dev), a universal toolchain manager — one container image, any language runtime, no additional images required.
 
 **ysa is a container runtime and local dashboard for running AI coding agents safely on your machine.**
 
@@ -33,6 +31,7 @@ No cloud, no telemetry, no data leaving your machine. Run multiple agents in par
 - **Parallel execution** — run multiple agents simultaneously, each in its own container and git worktree
 - **Hardened sandbox** — rootless Podman with defense-in-depth (see [Container security](#container-security))
 - **Network policy** — optional outbound traffic control with a local proxy and firewall enforcement
+- **Multi-language** — one container image, any runtime: Node.js, Python, Go, Rust, Ruby, PHP, Java, .NET, Elixir, C/C++ (via [mise](https://mise.jdx.dev) + apk)
 - **Multi-provider** — Claude Code and Mistral out of the box, extensible adapter interface
 - **Self-hosted models** — local/self-hosted model support coming soon
 - **Web UI + CLI** — browser dashboard and `ysa` CLI, both talking to the same local server
@@ -126,6 +125,26 @@ bash container/tests/security-test.sh --skip-network
 
 ---
 
+## Language support
+
+ysa uses [mise](https://mise.jdx.dev) as a universal toolchain manager — one container image, any language runtime. Select languages in Settings and ysa provisions the runtimes into a shared cache volume at config time, so containers get the right toolchain without needing network access at task runtime.
+
+| Language | Runtime |
+|---|---|
+| Node.js / Bun | mise (`node@22`) |
+| Python | mise (`python@3.13`) |
+| Go | mise (`go@latest`) |
+| Rust | mise (`rust@latest`) |
+| .NET | mise (`dotnet@8`) |
+| Elixir | apk (`elixir` + erlang) |
+| Ruby | apk (`ruby`) |
+| PHP | apk (`php`) |
+| Java (Maven) | apk (`openjdk21-jdk` + `maven`) |
+| Java (Gradle) | apk (`openjdk21-jdk` + `gradle`) |
+| C / C++ | apk (`g++`) |
+
+---
+
 ## Configuration
 
 All configuration is stored in `~/.ysa/core.db` (SQLite). No environment files needed.
@@ -134,6 +153,7 @@ Settings managed through the web UI:
 - **Project root** — directory where worktrees are created
 - **Default provider / model** — pre-fill provider and model selection
 - **Default network policy** — Unrestricted or Restricted
+- **Languages** — select runtimes to provision into the shared mise cache
 - **Preferred terminal** — for the Sandbox Shell feature
 
 ---
