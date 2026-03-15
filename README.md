@@ -31,7 +31,7 @@ No cloud, no telemetry, no data leaving your machine. Run multiple agents in par
 - **Parallel execution** — run multiple agents simultaneously, each in its own container and git worktree
 - **Hardened sandbox** — rootless Podman with defense-in-depth (see [Container security](#container-security))
 - **Network policy** — optional outbound traffic control with a local proxy and firewall enforcement
-- **Multi-language** — one container image, any runtime: Node.js, Python, Go, Rust, Ruby, PHP, Java, .NET, Elixir, C/C++ (via [mise](https://mise.jdx.dev) + apk)
+- **Multi-language** — one container image, any runtime: Node.js, Python, Go, Rust, Ruby, PHP, Java, .NET, Elixir, C/C++ (via [mise](https://mise.jdx.dev) + apt)
 - **Multi-provider** — Claude Code and Mistral out of the box, extensible adapter interface
 - **Self-hosted models** — local/self-hosted model support coming soon
 - **Web UI + CLI** — browser dashboard and `ysa` CLI, both talking to the same local server
@@ -133,15 +133,15 @@ ysa uses [mise](https://mise.jdx.dev) as a universal toolchain manager — one c
 |---|---|
 | Node.js / Bun | mise (`node@22`) |
 | Python | mise (`python@3.13`) |
-| Go | mise (`go@latest`) |
-| Rust | mise (`rust@latest`) |
+| Go | mise (`go@1`) |
+| Rust | mise (`rust@1`) |
 | .NET | mise (`dotnet@8`) |
-| Elixir | apk (`elixir` + erlang) |
-| Ruby | apk (`ruby`) |
-| PHP | apk (`php`) |
-| Java (Maven) | apk (`openjdk21-jdk` + `maven`) |
-| Java (Gradle) | apk (`openjdk21-jdk` + `gradle`) |
-| C / C++ | apk (`g++`) |
+| Ruby | mise (`ruby@3.3`) |
+| Java (Maven) | mise (`java@21` + `maven@3`) |
+| Java (Gradle) | mise (`java@21` + `gradle@8`) |
+| Elixir | mise (`elixir@1.18-otp-26`) + apt (`erlang`) |
+| PHP | apt (`php-cli`) |
+| C / C++ | apt (`g++`) |
 
 ---
 
