@@ -150,7 +150,7 @@ export function getShadowDirsForLanguages(langs: DetectedLanguage[]): string[] {
 }
 
 interface MiseToolSpec {
-  tool?: string;
+  tool?: string | string[];
   installEnv?: Record<string, string>;
   runtimeEnv?: Record<string, string>;
   apkPackages?: string[];
@@ -179,18 +179,17 @@ const MISE_TOOL_MAP: Partial<Record<DetectedLanguage, MiseToolSpec>> = {
       RUSTUP_HOME: `${MISE_INSTALLS}/.rustup`,
     },
   },
-  ruby: { apkPackages: ["ruby", "ruby-dev"] },
-  php: { apkPackages: ["php", "php-phar", "php-openssl"] },
-  "java-maven": { apkPackages: ["openjdk21-jdk", "maven"] },
-  "java-gradle": { apkPackages: ["openjdk21-jdk", "gradle"] },
+  ruby: { tool: "ruby@3.3", installEnv: { MISE_RUBY_COMPILE: "false" } },
+  php: { apkPackages: ["php-cli"] },
+  "java-maven": { tool: ["java@21", "maven@3"] },
+  "java-gradle": { tool: ["java@21", "gradle@8"] },
   dotnet: {
     tool: "dotnet@8",
     postInstallCopy: ["dotnet-root"],
     runtimeEnv: { DOTNET_ROOT: `${MISE_INSTALLS}/dotnet-root` },
   },
-  // swift: not supported on Alpine (no apk package, no swift.org binary for musl/aarch64)
-  elixir: { apkPackages: ["elixir"] }, // elixir apk pulls in erlang automatically
-  "c-cpp": { apkPackages: ["g++"] }, // gcc is in the base image; g++ is a separate apk package
+  elixir: { tool: "elixir@1.18-otp-26", apkPackages: ["erlang"] }, // erlang OTP 26 from apt; bump tool when Debian ships newer OTP
+  "c-cpp": { apkPackages: ["g++"] }, // gcc is in the base image; g++ is a separate apt package
   // unknown: nothing
 };
 
@@ -211,7 +210,10 @@ export function getMiseToolsForLanguages(langs: DetectedLanguage[]): MiseInstall
   for (const lang of langs) {
     const spec = MISE_TOOL_MAP[lang];
     if (spec) {
-      if (spec.tool) tools.add(spec.tool);
+      if (spec.tool) {
+        const toolList = Array.isArray(spec.tool) ? spec.tool : [spec.tool];
+        toolList.forEach(t => tools.add(t));
+      }
       if (spec.installEnv) Object.assign(env, spec.installEnv);
       if (spec.runtimeEnv) Object.assign(runtimeEnv, spec.runtimeEnv);
       if (spec.apkPackages) spec.apkPackages.forEach(p => apkPackages.add(p));
