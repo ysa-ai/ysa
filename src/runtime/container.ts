@@ -56,10 +56,22 @@ export async function rebuildSandboxImage(
   apkPackages: string[],
   image: string = "sandbox-claude",
   onLog?: (line: string) => void,
+  caDir?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const caScript = resolve(CONTAINER_DIR, "generate-ca.sh");
-  const caGen = await runShell(`bash "${caScript}" "${CONTAINER_DIR}"`);
-  if (!caGen.ok) return { ok: false, error: `CA generation failed: ${caGen.stderr}` };
+  // Resolve CA cert: reuse persisted cert from caDir if present, otherwise generate fresh
+  if (caDir && await Bun.file(resolve(caDir, "ca.pem")).exists()) {
+    await runShell(`cp "${caDir}/ca.pem" "${CONTAINER_DIR}/ca.pem" && cp "${caDir}/ca-key.pem" "${CONTAINER_DIR}/ca-key.pem"`);
+  } else {
+    const genDir = caDir ?? CONTAINER_DIR;
+    if (caDir) await runShell(`mkdir -p "${genDir}" && chmod 700 "${genDir}"`);
+    const caScript = resolve(CONTAINER_DIR, "generate-ca.sh");
+    const caGen = await runShell(`bash "${caScript}" "${genDir}"`);
+    if (!caGen.ok) return { ok: false, error: `CA generation failed: ${caGen.stderr}` };
+    if (caDir) {
+      await runShell(`chmod 644 "${genDir}/ca.pem" && chmod 600 "${genDir}/ca-key.pem"`);
+      await runShell(`cp "${genDir}/ca.pem" "${CONTAINER_DIR}/ca.pem" && cp "${genDir}/ca-key.pem" "${CONTAINER_DIR}/ca-key.pem"`);
+    }
+  }
 
   const extraPackages = apkPackages.join(" ");
   const proc = Bun.spawn([
@@ -103,13 +115,18 @@ export async function installRuntimes(
   await runShell(`podman volume exists ${dataVolume} 2>/dev/null || podman volume create ${dataVolume}`);
 
   const toolEnvLines = Object.entries(runtimeEnv).map(([k, v]) => `export ${k}=${v}`);
+  const totalSteps = tools.length + 1; // +1 for finalize step
+  const installSteps = tools.map((tool, i) =>
+    `echo "STEP ${i + 1}/${totalSteps}: Installing ${tool}" && "$MISE" use --global "${tool}" --yes 2>/dev/null || true`
+  );
   const script = [
     'MISE=/home/agent/.local/bin/mise',
     '[ -x "$MISE" ] || exit 1',
-    'for _tool in $MISE_TOOLS; do "$MISE" use --global "${_tool}" --yes 2>/dev/null || true; done',
+    ...installSteps,
     ...copyDirs.map(d =>
       `[ -d "/home/agent/.local/share/mise/${d}" ] && cp -r "/home/agent/.local/share/mise/${d}" "/home/agent/.local/share/mise/installs/${d}" || true`
     ),
+    `echo "STEP ${totalSteps}/${totalSteps}: Finalizing"`,
     '"$MISE" bin-paths 2>/dev/null | tr \'\\n\' \':\' | sed \'s/:$//\' > /home/agent/.local/share/mise/installs/.bin-paths',
     ...copyDirs.map(d =>
       `sed -i 's|/home/agent/.local/share/mise/${d}|/home/agent/.local/share/mise/installs/${d}|g' /home/agent/.local/share/mise/installs/.bin-paths 2>/dev/null || true`

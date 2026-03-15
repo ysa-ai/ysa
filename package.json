@@ -1,6 +1,6 @@
 {
   "name": "@ysa-ai/ysa",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Run AI coding agents (Claude, Mistral, other providers coming soon) in parallel inside hardened, isolated containers with git worktree separation.",
   "license": "Elastic-2.0",
@@ -50,7 +50,7 @@
     "dev:server": "bun --hot src/server/index.ts",
     "dev:client": "bunx vite --host",
     "build": "bunx vite build",
-    "build:images": "bash container/generate-ca.sh container && podman build -t sandbox-claude -f container/Containerfile container/ && podman build -t sandbox-mistral -f container/Containerfile.mistral container/ && podman build -t sandbox-proxy -f container/Containerfile.proxy container/ && rm -f container/ca-key.pem container/ca.pem && (podman rm -f ysa-proxy 2>/dev/null; podman image prune -f)",
+    "build:images": "bash container/generate-ca.sh container && mkdir -p \"${CA_DIR:-.ysa/proxy-ca}\" && cp container/ca.pem \"${CA_DIR:-.ysa/proxy-ca}/ca.pem\" && cp container/ca-key.pem \"${CA_DIR:-.ysa/proxy-ca}/ca-key.pem\" && chmod 644 \"${CA_DIR:-.ysa/proxy-ca}/ca.pem\" && chmod 600 \"${CA_DIR:-.ysa/proxy-ca}/ca-key.pem\" && podman build -t sandbox-claude -f container/Containerfile container/ && podman build -t sandbox-mistral -f container/Containerfile.mistral container/ && podman build -t sandbox-proxy -f container/Containerfile.proxy container/ && rm -f container/ca-key.pem container/ca.pem && (podman rm -f ysa-proxy 2>/dev/null; podman image prune -f)",
     "prepublishOnly": "bun run build",
     "start": "bun src/server/index.ts",
     "typecheck": "tsc --noEmit"

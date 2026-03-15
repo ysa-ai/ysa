@@ -122,7 +122,7 @@ PROXY_ENV_FLAGS=""
 if [ "$NETWORK_POLICY" = "strict" ] || [ "$NETWORK_POLICY" = "custom" ]; then
   NETWORK_FLAGS="--annotation network_policy=$NETWORK_POLICY"
   PROXY_URL="http://${TASK_ID}:x@host.containers.internal:3128"
-  PROXY_ENV_FLAGS="-e HTTP_PROXY=$PROXY_URL -e HTTPS_PROXY=$PROXY_URL -e http_proxy=$PROXY_URL -e https_proxy=$PROXY_URL -e NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/ysa-proxy-ca.crt -e NODE_USE_ENV_PROXY=1"
+  PROXY_ENV_FLAGS="-e HTTP_PROXY=$PROXY_URL -e HTTPS_PROXY=$PROXY_URL -e http_proxy=$PROXY_URL -e https_proxy=$PROXY_URL -e NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/ysa-proxy-ca.crt -e NODE_USE_ENV_PROXY=1 -e NODE_NO_WARNINGS=1"
   if [ -n "${NO_PROXY:-}" ]; then
     PROXY_ENV_FLAGS="$PROXY_ENV_FLAGS -e NO_PROXY=$NO_PROXY -e no_proxy=$NO_PROXY"
   fi
