@@ -162,6 +162,60 @@ export async function installRuntimes(
   return { ok, error: ok ? undefined : errLines.join("\n").trim() };
 }
 
+// Run installCmd inside a short-lived container with the shadow volume mounted.
+// This ensures packages land in the shadow volume, not the host worktree.
+export async function installDepsInShadow(opts: {
+  worktree: string;
+  installCmd: string;
+  shadowVolume: string;
+  shadowDir: string;         // workspace-relative dir, e.g. "node_modules"
+  image?: string;
+  miseVolume?: string;
+  binPathsFile?: string;     // path inside miseVolume to .bin-paths
+}): Promise<{ ok: boolean; error?: string }> {
+  const image = opts.image ?? "sandbox-claude";
+  const binPathsFile = opts.binPathsFile ?? "/home/agent/.local/share/mise/installs/.bin-paths";
+
+  await runShell(`podman volume exists ${opts.shadowVolume} 2>/dev/null || podman volume create ${opts.shadowVolume}`);
+
+  const activateMise = opts.miseVolume
+    ? `if [ -s ${binPathsFile} ]; then export PATH="$(cat ${binPathsFile}):$PATH"; fi`
+    : "";
+
+  const script = [
+    activateMise,
+    `cd /workspace && ${opts.installCmd}`,
+  ].filter(Boolean).join("\n");
+
+  const args = [
+    "podman", "run", "--rm",
+    "--userns=keep-id",
+    "--network", "slirp4netns",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges",
+    "-v", `${opts.worktree}:/workspace:rw`,
+    "--mount", `type=volume,src=${opts.shadowVolume},dst=/workspace/${opts.shadowDir}`,
+  ];
+
+  if (opts.miseVolume) {
+    args.push("--mount", `type=volume,src=${opts.miseVolume},dst=/home/agent/.local/share/mise/installs`);
+  }
+
+  args.push(image, "-c", script);
+
+  const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+
+  const errLines: string[] = [];
+  await Promise.all([
+    streamLines(proc.stdout, () => {}),
+    streamLines(proc.stderr, (line) => errLines.push(line)),
+    proc.exited,
+  ]);
+
+  const ok = proc.exitCode === 0;
+  return { ok, error: ok ? undefined : errLines.join("\n").trim() };
+}
+
 export interface SpawnSandboxOpts {
   worktree: string;
   gitDir: string;
