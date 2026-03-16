@@ -306,7 +306,7 @@ podman run --rm \
         cp /etc/claude-defaults/settings.json /home/agent/.claude/settings.json
       fi
       if [ -f /home/agent/.claude.json ]; then
-        jq '.hasCompletedOnboarding = true | .projects[\\\"/workspace\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && mv /tmp/cj.json /home/agent/.claude.json
+        jq '.hasCompletedOnboarding = true | .projects[\\\"/workspace\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && cp /tmp/cj.json /home/agent/.claude.json && rm -f /tmp/cj.json
       else
         echo '{\"hasCompletedOnboarding\":true,\"projects\":{\"/workspace\":{\"hasTrustDialogAccepted\":true}}}' > /home/agent/.claude.json
       fi
