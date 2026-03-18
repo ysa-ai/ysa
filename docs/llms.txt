@@ -1,0 +1,34 @@
+# ysa
+
+> Secure container runtime for AI agents. Open source, Apache 2.0. Every agent runs in a hardened Podman container on your machine — seccomp whitelist, MITM network proxy, no host kernel exposure. CLI and SDK. Multi-provider (Claude, Mistral), multi-language via mise.
+
+ysa is a container runtime and nothing else. It is the security backbone that orchestration layers build on top of. ysa platform (ysa.run) is one such layer — built entirely on ysa.
+
+## What it does
+
+- `ysa setup` — single command, turnkey from zero to running on a fresh machine
+- `ysa run "prompt"` — from any git repo, zero config, git root auto-detected
+- Hardened Podman containers per task: seccomp whitelist (~190 syscalls), --cap-drop ALL, read-only root filesystem, rootless
+- MITM network proxy (L7): GET-only in strict mode, domain allowlist, rate limits, all requests logged
+- OCI network hook (L3/L4): iptables enforcement in container network namespace
+- Multi-provider: Claude (Anthropic) and Mistral out of the box, extensible via registerProvider()
+- Multi-language: auto-detects .mise.toml and pre-installs runtimes before the task runs
+- SDK: `import { runTask } from "@ysa-ai/ysa/runtime"` — build your own orchestration layer
+
+## Coming soon
+
+- Real-time streaming output during `ysa run`
+- Refine/continue: `ysa refine <id> "prompt"`, interactive mode after task completion
+- Orchestration guide: Symphony-style doc for building on top of ysa
+
+## Three entry points
+
+1. **Try the CLI** — install ysa, run `ysa setup`, fire a task from a real repo
+2. **Build your own orchestration layer** — use `runTask()` as your primitive, see the orchestration guide (coming soon)
+3. **Use ysa platform** — GitHub/GitLab integration, custom workflows, team management (coming soon at ysa.run)
+
+## Links
+
+- [GitHub](https://github.com/ysa-ai/ysa): Source code, Apache 2.0
+- [npm](https://www.npmjs.com/package/@ysa-ai/ysa): @ysa-ai/ysa package
+- [ysa platform](https://ysa.run): Orchestration layer built on ysa

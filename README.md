@@ -1,14 +1,21 @@
 # Your Secure Agent
 
+[![npm](https://img.shields.io/npm/v/@ysa-ai/ysa)](https://www.npmjs.com/package/@ysa-ai/ysa)
+[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://open.ysa.run)
+
 > **Early development** — this repo is under active development. Expect breaking changes between releases.
 
-**ysa is a container runtime and local dashboard for running AI coding agents safely on your machine.**
+**ysa is a secure container runtime for AI coding agents — a CLI and SDK, nothing else.**
 
-You get two things out of the box:
-- **A secure container runtime** — every agent runs in an isolated, rootless Podman container with a hardened sandbox, its own git worktree, and optional network policy enforcement
-- **A local web dashboard + CLI** — a simple UI to launch tasks, monitor logs, review results, and manage parallel agent sessions
+Every agent runs in an isolated, rootless Podman container with a hardened sandbox, its own git worktree, and optional network policy enforcement. No cloud, no telemetry, no data leaving your machine.
 
-No cloud, no telemetry, no data leaving your machine. Run multiple agents in parallel on the same codebase, each on its own branch, each fully isolated from each other and from your host system.
+```bash
+ysa setup          # one-time setup on a fresh machine
+ysa run "prompt"   # from any git repo, zero config
+```
+
+If you want a fully-featured orchestration layer on top of ysa — GitLab/GitHub integration, multi-phase workflows, team management — ysa platform (coming soon at ysa.run) is built exactly this way.
 
 <p align="center"><img src="./docs/architecture-overview.svg" width="600" /></p>
 
@@ -22,21 +29,45 @@ No cloud, no telemetry, no data leaving your machine. Run multiple agents in par
 |---|---|
 | **Security** | Every agent runs in a locked-down container: no root, read-only filesystem, syscall whitelist, capability-stripped |
 | **Sovereignty** | Runs entirely on your machine. No cloud, no telemetry, no data leaving your network |
-| **Productivity** | Run multiple agents in parallel on the same codebase, each on its own branch  |
+| **Composability** | Use `runTask()` as a primitive to build any orchestration layer on top |
 
 ---
 
 ## Features
 
-- **Parallel execution** — run multiple agents simultaneously, each in its own container and git worktree
 - **Hardened sandbox** — rootless Podman with defense-in-depth (see [Container security](#container-security))
 - **Network policy** — optional outbound traffic control with a local proxy and firewall enforcement
 - **Multi-language** — one container image, any runtime: Node.js, Python, Go, Rust, Ruby, PHP, Java, .NET, Elixir, C/C++ (via [mise](https://mise.jdx.dev) + apt)
-- **Multi-provider** — Claude Code and Mistral out of the box, extensible adapter interface
-- **Self-hosted models** — local/self-hosted model support coming soon
-- **Web UI + CLI** — browser dashboard and `ysa` CLI, both talking to the same local server
+- **Multi-provider** — Claude Code and Mistral out of the box, extensible via `registerProvider()`
+- **SDK** — `import { runTask } from "@ysa-ai/ysa/runtime"` — build your own orchestration layer
 - **Session resume** — continue or refine a stopped/completed agent session
 - **Sandbox shell** — open an interactive session inside the secured container for manual intervention
+
+---
+
+## Roadmap
+
+The current repo still ships a local web dashboard alongside the CLI. That's going away. The plan:
+
+**Phase 1 — CLI improvements**
+- `ysa setup` — single turnkey command on a fresh machine (Podman check, image build, CA cert, OCI hooks, proxy smoke test)
+- Git root auto-detection — `ysa run` walks up from CWD like `git` does, no config required
+- Real-time streaming output during `ysa run`
+- `ysa refine <id> "prompt"` — iterate on a completed task in the same session and worktree
+- Auto mise pre-install when `.mise.toml` is detected
+
+**Phase 2 — Clean public SDK API**
+- Expose a stable, minimal `RunConfig` interface — no internal provider fields leaking to callers
+- Proxy auto-start inside `runTask()` when `networkPolicy: "strict"` — works without running the server
+
+**Phase 3 — Orchestration guide**
+- One doc, code-first, inspired by OpenAI Symphony: concept → code → done
+- Covers `runTask()`, providers, multi-language, result reading, basic orchestration loops
+- Written after the API is stable
+
+**After that:** the dashboard is removed from this repo. ysa becomes a pure runtime — CLI + SDK, Apache 2.0, no paid tier. ysa platform (coming soon at ysa.run) is the hosted orchestration layer built on top of it.
+
+> The license change will follow once the dashboard is stripped — the repo will move from its current license to Apache 2.0 fully, matching the landing page. The Apache 2.0 license is already reflected on [open.ysa.run](https://open.ysa.run) ahead of that change.
 
 ---
 

@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Secure container runtime for AI agents. One command to set up, one command to run. Hardened Podman containers, MITM network proxy, multi-provider. Apache 2.0.">
+  <meta name="robots" content="index, follow">
+  <meta name="keywords" content="AI agent sandbox, secure container runtime, Podman, Claude Code, coding agent, runTask, developer tool, open source">
+  <meta name="author" content="ysa">
+  <link rel="canonical" href="https://open.ysa.run/">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:url" content="https://open.ysa.run/">
+  <meta property="og:site_name" content="ysa">
+  <meta property="og:title" content="ysa — secure container runtime for AI agents">
+  <meta property="og:description" content="One command to set up, one command to run. Every agent in a hardened container. Multi-provider, multi-language, fully auditable. Apache 2.0.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ysa — secure container runtime for AI agents">
+  <meta name="twitter:description" content="One command to set up, one command to run. Every agent in a hardened container. Multi-provider, multi-language, fully auditable. Apache 2.0.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a0a0a'/><text x='50' y='72' font-family='system-ui,sans-serif' font-size='64' font-weight='800' fill='%2300ff88' text-anchor='middle'>y</text></svg>">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "ysa",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "macOS, Linux",
+    "description": "Secure container runtime for AI agents. Hardened Podman containers, MITM network proxy, multi-provider (Claude, Mistral), multi-language via mise. CLI and SDK. Apache 2.0.",
+    "url": "https://open.ysa.run",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+    "codeRepository": "https://github.com/ysa-ai/ysa"
+  }
+  </script>
+  <title>ysa — secure container runtime for AI agents</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #0f0f0f;
+      --text: #e8e8e8;
+      --dim: #888;
+      --accent: #00ff88;
+      --border: #1e1e1e;
+      --font: 'JetBrains Mono', monospace;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.6;
+      min-height: 100vh;
+      position: relative;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.1) 2px,
+        rgba(0,0,0,0.1) 4px
+      );
+      pointer-events: none;
+      z-index: 1000;
+    }
+
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.25rem 2.5rem;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: rgba(10,10,10,0.96);
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+    }
+
+    .nav-logo {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: -0.02em;
+      text-decoration: none;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--dim);
+      text-decoration: none;
+      font-size: 0.8125rem;
+      transition: color 0.15s;
+    }
+
+    .nav-links a:hover { color: var(--text); }
+
+    .nav-cta {
+      color: var(--accent) !important;
+      border: 1px solid var(--accent);
+      padding: 0.35rem 0.9rem;
+      transition: background 0.15s !important;
+    }
+
+    .nav-cta:hover { background: rgba(0,255,136,0.1) !important; }
+
+    .hero {
+      padding: 5rem 2.5rem 4rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .beta-badge {
+      display: inline-block;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-size: 0.6875rem;
+      padding: 0.2rem 0.6rem;
+      margin-bottom: 2.5rem;
+      letter-spacing: 0.1em;
+    }
+
+    .terminal-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 1.5rem;
+      margin-bottom: 3.5rem;
+      font-size: 0.8125rem;
+      line-height: 1.8;
+      position: relative;
+    }
+
+    .terminal-dots {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-r { background: #ff5f57; }
+    .dot-y { background: #febc2e; }
+    .dot-g { background: #28c840; }
+
+    .terminal-output { min-height: 140px; }
+
+    .t-prompt { color: var(--accent); }
+    .t-info { color: var(--dim); }
+    .t-success { color: #00cc6a; }
+    .t-stream { color: #3a3a3a; }
+
+    .t-cursor {
+      display: inline-block;
+      width: 8px;
+      height: 1em;
+      background: var(--accent);
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    .hero-headline {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 700;
+      line-height: 1.08;
+      margin-bottom: 1rem;
+      letter-spacing: -0.03em;
+    }
+
+    .hero-headline span { color: var(--accent); }
+
+    .hero-sub {
+      color: var(--dim);
+      font-size: 0.9375rem;
+      margin-bottom: 2.5rem;
+      max-width: 55ch;
+      font-weight: 300;
+      line-height: 1.75;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg);
+      font-family: var(--font);
+      font-weight: 700;
+      font-size: 0.8125rem;
+      padding: 0.75rem 1.5rem;
+      text-decoration: none;
+      display: inline-block;
+      transition: opacity 0.15s;
+    }
+
+    .btn-primary:hover { opacity: 0.85; }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 0.8125rem;
+      padding: 0.75rem 1.5rem;
+      border: 1px solid var(--border);
+      text-decoration: none;
+      display: inline-block;
+      transition: border-color 0.15s;
+    }
+
+    .btn-secondary:hover { border-color: var(--dim); }
+
+    .selling {
+      padding: 4rem 2.5rem 5rem;
+      max-width: 900px;
+      margin: 0 auto;
+      border-top: 1px solid var(--border);
+    }
+
+    .selling-label {
+      color: var(--dim);
+      font-size: 0.6875rem;
+      letter-spacing: 0.1em;
+      margin-bottom: 2.5rem;
+    }
+
+    .points-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 0;
+    }
+
+    .point {
+      background: var(--bg);
+      padding: 2rem;
+      border: 1px solid var(--border);
+      margin: -1px 0 0 -1px;
+    }
+
+    .point-label {
+      color: var(--accent);
+      font-size: 0.6875rem;
+      letter-spacing: 0.1em;
+      margin-bottom: 1rem;
+    }
+
+    .point-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 0.875rem;
+    }
+
+    .point-desc {
+      color: var(--dim);
+      font-size: 0.775rem;
+      line-height: 1.75;
+      font-weight: 300;
+    }
+
+    .point-stats {
+      margin-top: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .stat { font-size: 0.7rem; color: #3a3a3a; }
+    .stat span { color: #666; }
+    .stat .soon { color: #333; font-style: italic; }
+
+    .point-code {
+      margin-top: 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--accent);
+      font-size: 0.7rem;
+      padding: 0.6rem 0.875rem;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .funnel {
+      padding: 3rem 2.5rem 5rem;
+      max-width: 900px;
+      margin: 0 auto;
+      border-top: 1px solid var(--border);
+    }
+
+    .funnel-label {
+      color: var(--dim);
+      font-size: 0.6875rem;
+      letter-spacing: 0.1em;
+      margin-bottom: 2rem;
+    }
+
+    .funnel-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      border: 1px solid var(--border);
+    }
+
+    .funnel-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 1.5rem;
+      padding: 1.5rem 2rem;
+      border-bottom: 1px solid var(--border);
+      text-decoration: none;
+      color: inherit;
+      transition: background 0.15s;
+    }
+
+    .funnel-step:last-child { border-bottom: none; }
+    .funnel-step:hover { background: var(--surface); }
+
+    .funnel-num {
+      color: var(--accent);
+      font-size: 0.6875rem;
+      letter-spacing: 0.1em;
+      flex-shrink: 0;
+      padding-top: 0.2rem;
+    }
+
+    .funnel-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      margin-bottom: 0.3rem;
+    }
+
+    .funnel-desc {
+      color: var(--dim);
+      font-size: 0.75rem;
+      font-weight: 300;
+      line-height: 1.6;
+    }
+
+    .funnel-arrow {
+      margin-left: auto;
+      color: var(--dim);
+      font-size: 0.8rem;
+      flex-shrink: 0;
+      padding-top: 0.2rem;
+    }
+
+    @media (max-width: 1024px) {
+      .points-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links li:not(:last-child) { display: none; }
+      .hero-headline { font-size: clamp(1.75rem, 6vw, 2.5rem); }
+      .funnel-step { gap: 1rem; }
+    }
+
+    @media (max-width: 640px) {
+      nav { padding: 1rem 1.25rem; }
+      .nav-links { gap: 1rem; }
+      .hero { padding: 3rem 1.25rem 2.5rem; }
+      .selling { padding: 3rem 1.25rem 4rem; }
+      .funnel { padding: 2.5rem 1.25rem 4rem; }
+      .points-grid { grid-template-columns: 1fr; }
+      .terminal-block { font-size: 0.7rem; }
+      .point-code { font-size: 0.6rem; white-space: normal; word-break: break-all; }
+      .funnel-num { display: none; }
+      .btn-primary, .btn-secondary { width: 100%; text-align: center; }
+      .hero-actions { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/" class="nav-logo">ysa</a>
+    <ul class="nav-links">
+      <li><a href="#">docs</a></li>
+      <li><a href="https://github.com/ysa-ai/ysa" target="_blank" rel="noopener">github</a></li>
+      <li><a href="https://ysa.run" class="nav-cta" style="opacity:0.5;cursor:default;pointer-events:none;">→ platform (soon)</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <section class="hero">
+      <div class="beta-badge">OPEN SOURCE — Apache 2.0</div>
+
+      <div class="terminal-block">
+        <div class="terminal-dots">
+          <div class="dot dot-r"></div>
+          <div class="dot dot-y"></div>
+          <div class="dot dot-g"></div>
+        </div>
+        <div class="terminal-output" id="terminal-output"></div>
+      </div>
+
+      <h1 class="hero-headline">
+        Secure container runtime<br>
+        for <span>AI agents</span>.
+      </h1>
+      <p class="hero-sub">
+        One command to set up. One command to run. Every agent isolated in a
+        hardened container — seccomp, network proxy, no host exposure.
+        Multi-provider, multi-language. Build on it or use it standalone.
+      </p>
+      <div class="hero-actions">
+        <a href="https://github.com/ysa-ai/ysa" target="_blank" rel="noopener" class="btn-primary">→ github.com/ysa-ai/ysa</a>
+        <a href="#" class="btn-secondary">read the docs</a>
+      </div>
+    </section>
+
+    <section class="selling">
+      <p class="selling-label">// why ysa</p>
+      <div class="points-grid">
+        <div class="point">
+          <p class="point-label">// 01 — zero config</p>
+          <h3 class="point-title">One command to start.</h3>
+          <p class="point-desc">
+            <code>ysa setup</code> handles everything on a fresh machine — Podman check,
+            image build, CA cert, OCI hooks, proxy smoke test. Then
+            <code>ysa run "prompt"</code> from any git repo. No config file required.
+          </p>
+          <div class="point-stats">
+            <div class="stat">setup: <span>ysa setup</span></div>
+            <div class="stat">run: <span>ysa run "fix the auth bug"</span></div>
+            <div class="stat">streaming output: <span class="soon">coming soon</span></div>
+            <div class="stat">refine/continue: <span class="soon">coming soon</span></div>
+          </div>
+        </div>
+        <div class="point">
+          <p class="point-label">// 02 — security</p>
+          <h3 class="point-title">Hardened by default.</h3>
+          <p class="point-desc">
+            Every task runs in a rootless Podman container with a custom seccomp
+            profile, OCI network hooks, and a MITM proxy that enforces strict
+            traffic rules. The host kernel is never exposed.
+          </p>
+          <div class="point-stats">
+            <div class="stat">syscall whitelist: <span>190 calls</span></div>
+            <div class="stat">capabilities: <span>--cap-drop ALL</span></div>
+            <div class="stat">network: <span>proxy-enforced, logged</span></div>
+            <div class="stat">telemetry: <span>none</span></div>
+          </div>
+        </div>
+        <div class="point">
+          <p class="point-label">// 03 — extensible</p>
+          <h3 class="point-title">Multi-provider. Multi-language.</h3>
+          <p class="point-desc">
+            Claude and Mistral out of the box. Extend with <code>registerProvider()</code>
+            to plug in any model. Auto-detects <code>.mise.toml</code> and
+            pre-installs runtimes — Node, Python, Go, whatever the project needs.
+          </p>
+          <div class="point-stats">
+            <div class="stat">providers: <span>Claude, Mistral</span></div>
+            <div class="stat">custom: <span>registerProvider()</span></div>
+            <div class="stat">languages: <span>via mise auto-detect</span></div>
+          </div>
+        </div>
+        <div class="point">
+          <p class="point-label">// 04 — composable</p>
+          <h3 class="point-title">Build on it.</h3>
+          <p class="point-desc">
+            Use ysa as an SDK and build your own orchestration layer on top.
+            ysa platform is built exactly this way. The runtime is the only thing ysa will ever be.
+          </p>
+          <div class="point-code">import { runTask } from "@ysa-ai/ysa/runtime"</div>
+          <div class="point-stats">
+            <div class="stat">license: <span>Apache 2.0</span></div>
+            <div class="stat">package: <span><a href="https://www.npmjs.com/package/@ysa-ai/ysa" target="_blank" rel="noopener" style="color:#666;text-decoration:none;border-bottom:1px solid #333;">@ysa-ai/ysa</a></span></div>
+            <div class="stat">orchestration guide: <span class="soon">coming soon</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="funnel">
+      <p class="funnel-label">// where to go from here</p>
+      <div class="funnel-steps">
+        <a href="https://github.com/ysa-ai/ysa" target="_blank" rel="noopener" class="funnel-step">
+          <span class="funnel-num">01 //</span>
+          <div>
+            <div class="funnel-title">Try the CLI</div>
+            <div class="funnel-desc">Install ysa, run <code>ysa setup</code>, fire your first task from a real repo.</div>
+          </div>
+          <span class="funnel-arrow">→</span>
+        </a>
+        <a href="#" class="funnel-step">
+          <span class="funnel-num">02 //</span>
+          <div>
+            <div class="funnel-title">Build your own orchestration layer</div>
+            <div class="funnel-desc">Use <code>runTask()</code> as your primitive. Guide covers setup, providers, multi-language, result reading. <span style="color:#333">— coming soon</span></div>
+          </div>
+          <span class="funnel-arrow">→</span>
+        </a>
+        <div class="funnel-step" style="opacity:0.45;cursor:default;">
+          <span class="funnel-num">03 //</span>
+          <div>
+            <div class="funnel-title">Use ysa platform <span style="color:#333;font-size:0.7rem;font-style:italic;">— coming soon</span></div>
+            <div class="funnel-desc">GitHub/GitLab integration, custom workflows, and team management out of the box. Built entirely on ysa.</div>
+          </div>
+          <span class="funnel-arrow" style="color:#333">→</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const lines = [
+      { text: '$ ysa setup', cls: 't-prompt', delay: 0 },
+      { text: '  ✔ podman 5.4.2 — rootless ok', cls: 't-success', delay: 600 },
+      { text: '  ✔ container image built', cls: 't-success', delay: 1100 },
+      { text: '  ✔ OCI hooks installed', cls: 't-success', delay: 1500 },
+      { text: '  ✔ proxy smoke test passed', cls: 't-success', delay: 1900 },
+      { text: '', cls: 't-info', delay: 2300 },
+      { text: '$ ysa run "fix the auth bug" --network strict', cls: 't-prompt', delay: 2700 },
+      { text: '  spawning container 7c3f1a9...', cls: 't-info', delay: 3300 },
+      { text: '  seccomp loaded · proxy active · session started', cls: 't-info', delay: 3900 },
+      { text: '  ████████████████░░░░ running — 18 tool calls', cls: 't-stream', delay: 4600 },
+    ];
+
+    const out = document.getElementById('terminal-output');
+
+    lines.forEach(({ text, cls, delay }) => {
+      setTimeout(() => {
+        const cur = out.querySelector('.t-cursor');
+        if (cur) cur.remove();
+        const line = document.createElement('div');
+        line.className = cls;
+        line.textContent = text;
+        out.appendChild(line);
+        const c = document.createElement('span');
+        c.className = 't-cursor';
+        out.appendChild(c);
+      }, delay);
+    });
+  </script>
+</body>
+</html>
