@@ -83,7 +83,7 @@ export async function runTask(config: RunConfig): Promise<RunResult> {
   if (config.promptUrl) env.PROMPT_URL = config.promptUrl;
   env.PROMPT_TOKEN = getOrCreateAuthToken();
 
-  const proc = spawnSandbox({
+  const proc = await spawnSandbox({
     worktree,
     gitDir,
     branch,

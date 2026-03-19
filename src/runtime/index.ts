@@ -1,7 +1,7 @@
 export { runTask } from "./runner";
 export { getAuthEnv } from "./auth";
 export { createWorktree, removeWorktree, prepareWorktree } from "./worktree";
-export { spawnSandbox, stopContainer, teardownContainer, SECCOMP_PROFILE, rebuildSandboxImage, installRuntimes, installDepsInShadow } from "./container";
+export { spawnSandbox, stopContainer, teardownContainer, getSeccompProfile, rebuildSandboxImage, installRuntimes, installDepsInShadow } from "./container";
 export type { SpawnSandboxOpts } from "./container";
 export { parseOutput, buildClaudeCommand } from "./output";
 export { ensureProxy, stopProxy } from "./proxy";
