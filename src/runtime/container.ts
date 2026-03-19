@@ -1,5 +1,5 @@
 import { readFile, stat } from "fs/promises";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync } from "fs";
 import { resolve } from "path";
 import { getProvider } from "../providers";
 
@@ -27,56 +27,19 @@ async function runShell(
   return { ok: exitCode === 0, stdout: stdout.trim(), stderr: stderr.trim() };
 }
 
-// Bun embeds these at compile time when referenced via new URL(..., import.meta.url)
-const _embedded: Record<string, ReturnType<typeof Bun.file>> = {
-  "sandbox-run.sh": Bun.file(new URL("../../container/sandbox-run.sh", import.meta.url)),
-  "seccomp.json": Bun.file(new URL("../../container/seccomp.json", import.meta.url)),
-  "Containerfile": Bun.file(new URL("../../container/Containerfile", import.meta.url)),
-  "Containerfile.mistral": Bun.file(new URL("../../container/Containerfile.mistral", import.meta.url)),
-  "Containerfile.proxy": Bun.file(new URL("../../container/Containerfile.proxy", import.meta.url)),
-  "generate-ca.sh": Bun.file(new URL("../../container/generate-ca.sh", import.meta.url)),
-  "git-push-guard.sh": Bun.file(new URL("../../container/git-push-guard.sh", import.meta.url)),
-  "git-safe-wrapper.sh": Bun.file(new URL("../../container/git-safe-wrapper.sh", import.meta.url)),
-  "container-sandbox-guard.sh": Bun.file(new URL("../../container/container-sandbox-guard.sh", import.meta.url)),
-  "claude-settings.json": Bun.file(new URL("../../container/claude-settings.json", import.meta.url)),
-  "network-proxy.ts": Bun.file(new URL("../../container/network-proxy.ts", import.meta.url)),
-  "vibe-config.toml": Bun.file(new URL("../../container/vibe-config.toml", import.meta.url)),
-};
-
 const _builtInDir = resolve(import.meta.dir, "..", "..", "container");
-const _cacheDir = resolve(process.env.HOME ?? "~", ".cache", "ysa-agent", "container");
 
-// In non-compiled installs the built-in dir exists — use it directly.
-// In compiled binaries import.meta.dir is baked from the build machine, so fall back to cache.
-const _containerDir = existsSync(resolve(_builtInDir, "sandbox-run.sh")) ? _builtInDir : _cacheDir;
+let _containerDir = existsSync(resolve(_builtInDir, "sandbox-run.sh")) ? _builtInDir : "";
+let SANDBOX_SCRIPT = resolve(_containerDir, "sandbox-run.sh");
+let CONTAINER_DIR = _containerDir;
 
-const SANDBOX_SCRIPT = resolve(_containerDir, "sandbox-run.sh");
-const CONTAINER_DIR = _containerDir;
-
-let _extracting: Promise<void> | null = null;
-
-async function ensureContainerFiles(): Promise<void> {
-  if (_containerDir === _builtInDir) return;
-  if (existsSync(resolve(_cacheDir, "sandbox-run.sh"))) return;
-  if (_extracting) return _extracting;
-  _extracting = (async () => {
-    mkdirSync(_cacheDir, { recursive: true });
-    for (const [name, file] of Object.entries(_embedded)) {
-      await Bun.write(resolve(_cacheDir, name), await file.arrayBuffer());
-    }
-    await Bun.spawn(["chmod", "+x",
-      resolve(_cacheDir, "sandbox-run.sh"),
-      resolve(_cacheDir, "generate-ca.sh"),
-      resolve(_cacheDir, "git-push-guard.sh"),
-      resolve(_cacheDir, "git-safe-wrapper.sh"),
-      resolve(_cacheDir, "container-sandbox-guard.sh"),
-    ]).exited;
-  })();
-  return _extracting;
+export function setContainerDir(dir: string): void {
+  _containerDir = dir;
+  SANDBOX_SCRIPT = resolve(dir, "sandbox-run.sh");
+  CONTAINER_DIR = dir;
 }
 
 export async function getSeccompProfile(): Promise<string> {
-  await ensureContainerFiles();
   return resolve(_containerDir, "seccomp.json");
 }
 
@@ -107,7 +70,6 @@ export async function rebuildSandboxImage(
   onLog?: (line: string) => void,
   caDir?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  await ensureContainerFiles();
   // Resolve CA cert: reuse persisted cert from caDir if present, otherwise generate fresh
   if (caDir && await Bun.file(resolve(caDir, "ca.pem")).exists()) {
     await runShell(`cp "${caDir}/ca.pem" "${CONTAINER_DIR}/ca.pem" && cp "${caDir}/ca-key.pem" "${CONTAINER_DIR}/ca-key.pem"`);
@@ -288,7 +250,6 @@ export interface SpawnSandboxOpts {
 }
 
 export async function spawnSandbox(opts: SpawnSandboxOpts) {
-  await ensureContainerFiles();
   const env: Record<string, string> = { ...process.env as Record<string, string>, ...opts.env };
   if (opts.logPath) env.LOG_FILE = opts.logPath;
   if (opts.networkPolicy) env.NETWORK_POLICY = opts.networkPolicy;
