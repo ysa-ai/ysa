@@ -5,7 +5,7 @@ import { eq, or, count } from "drizzle-orm";
 import { writeFile, readFile, stat, unlink, mkdir } from "fs/promises";
 import { join } from "path";
 import { runTask } from "../runtime/runner";
-import { stopContainer, teardownContainer, SECCOMP_PROFILE } from "../runtime/container";
+import { stopContainer, teardownContainer, getSeccompProfile } from "../runtime/container";
 import { removeWorktree } from "../runtime/worktree";
 import { getProvider } from "../providers";
 import { ensureProxy } from "../runtime/proxy";
@@ -746,6 +746,7 @@ export const taskActionsRouter = router({
 
       const launcherPath = join(launchersDir, `claude-refine-${input.taskId}.sh`);
       const tokenEnvPath = join(launchersDir, `token-${input.taskId}.env`);
+      const seccompProfile = await getSeccompProfile();
 
       await writeFile(tokenEnvPath, `export CLAUDE_CODE_OAUTH_TOKEN=${shellescape(oauthToken)}\n`, { mode: 0o600 });
 
@@ -767,7 +768,7 @@ podman run --rm -it \\
   --add-host host.containers.internal:host-gateway \\
   --cap-drop ALL \\
   --security-opt no-new-privileges \\
-  --security-opt seccomp=${shellescape(SECCOMP_PROFILE)} \\
+  --security-opt seccomp=${shellescape(seccompProfile)} \\
   --read-only \\
   --tmpfs /tmp:rw,nosuid,size=256m \\
   --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \\

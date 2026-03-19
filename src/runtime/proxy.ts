@@ -1,9 +1,8 @@
-import { resolve } from "path";
+import { getSeccompProfile } from "./container";
 
 const PROXY_CONTAINER_NAME = "ysa-proxy";
 const PROXY_PORT = 3128;
 const IMAGE = "sandbox-proxy";
-const SECCOMP_PROFILE = resolve(import.meta.dir, "..", "..", "container", "seccomp.json");
 
 export interface ScopedAllowRule {
   host: string;       // e.g. "api.example.com"
@@ -81,6 +80,7 @@ export async function startProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: 
     policyEnv += ` -e PROXY_POLICY=${JSON.stringify(JSON.stringify(policy))}`;
   }
 
+  const seccompProfile = await getSeccompProfile();
   const { ok, stderr } = await runShell(
     `podman run -d \
       --name ${PROXY_CONTAINER_NAME} \
@@ -88,7 +88,7 @@ export async function startProxy(scopedRules?: ScopedAllowRule[], bypassHosts?: 
       --network slirp4netns \
       --cap-drop ALL \
       --security-opt no-new-privileges \
-      --security-opt seccomp="${SECCOMP_PROFILE}" \
+      --security-opt seccomp="${seccompProfile}" \
       --read-only \
       --tmpfs /tmp:rw,noexec,nosuid,size=64m \
       --memory 512m \
