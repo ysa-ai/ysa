@@ -1,7 +1,7 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import { resolveProjectRoot } from "../git-root";
-import { logsDir, worktreesDir } from "../logs-dir";
+import { logsDir } from "../logs-dir";
 
 async function runShell(cmd: string): Promise<string> {
   const proc = Bun.spawn(["bash", "-c", cmd], { stdout: "pipe", stderr: "pipe" });
@@ -12,7 +12,7 @@ async function runShell(cmd: string): Promise<string> {
 
 export async function listCommand(opts: { status?: string; project?: string }) {
   const projectRoot = await resolveProjectRoot(opts.project);
-  const dir = worktreesDir(projectRoot);
+  const dir = logsDir(projectRoot);
 
   let entries: string[];
   try {
@@ -22,7 +22,8 @@ export async function listCommand(opts: { status?: string; project?: string }) {
     return;
   }
 
-  if (entries.length === 0) {
+  const logFiles = entries.filter((e) => e.endsWith(".log"));
+  if (logFiles.length === 0) {
     console.log("No tasks found.");
     return;
   }
@@ -34,19 +35,20 @@ export async function listCommand(opts: { status?: string; project?: string }) {
   const runningIds = new Set(running.split("\n").filter(Boolean));
 
   const rows: { id: string; status: string; mtime: Date }[] = [];
-  for (const entry of entries) {
-    const worktree = join(dir, entry);
+  for (const entry of logFiles) {
+    const taskId = entry.slice(0, -4); // strip .log
+    const logPath = join(dir, entry);
     let mtime: Date;
     try {
-      const s = await stat(worktree);
+      const s = await stat(logPath);
       mtime = s.mtime;
     } catch {
       continue;
     }
 
-    const status = runningIds.has(entry) ? "running" : "done";
+    const status = runningIds.has(taskId) ? "running" : "done";
     if (opts.status && opts.status !== status) continue;
-    rows.push({ id: entry, status, mtime });
+    rows.push({ id: taskId, status, mtime });
   }
 
   rows.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());

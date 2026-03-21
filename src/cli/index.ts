@@ -1,5 +1,10 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+const { version: pkgVersion } = JSON.parse(
+  readFileSync(resolve(import.meta.dir, "../../package.json"), "utf-8"),
+) as { version: string };
 import { runCommand } from "./commands/run";
 import { listCommand } from "./commands/list";
 import { stopCommand } from "./commands/stop";
@@ -14,7 +19,7 @@ const program = new Command();
 program
   .name("ysa")
   .description("Run sandboxed AI coding tasks")
-  .version("0.0.1");
+  .version(pkgVersion);
 
 program
   .command("run")
