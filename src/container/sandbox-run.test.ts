@@ -16,15 +16,11 @@ describe("sandbox-run.sh", () => {
     expect(curlLine).toContain("--connect-timeout 5");
   });
 
-  it("ut-mise-1: creates mise-installs volume before podman run", () => {
-    const podmanRunIndex = sandboxRunContent.indexOf("podman run --rm");
-    const miseExistsIndex = sandboxRunContent.indexOf('podman volume exists "mise-installs"');
-    const miseCreateIndex = sandboxRunContent.indexOf('podman volume create "mise-installs"');
-
-    expect(miseExistsIndex).toBeGreaterThan(-1);
-    expect(miseCreateIndex).toBeGreaterThan(-1);
-    expect(miseExistsIndex).toBeLessThan(podmanRunIndex);
-    expect(miseCreateIndex).toBeLessThan(podmanRunIndex);
+  it("ut-mise-1: mounts MISE_VOLUME (provided by caller) into container", () => {
+    // Volume creation is now handled by ensureMiseRuntimes() in the caller (runner.ts).
+    // sandbox-run.sh just reads MISE_VOLUME and mounts it.
+    expect(sandboxRunContent).toContain('MISE_VOLUME="${MISE_VOLUME:-mise-installs}"');
+    expect(sandboxRunContent).toContain("src=${MISE_VOLUME}");
   });
 
   it("ut-mise-2: podman run mounts mise-installs at mise installs path with MISE_DATA_DIR", () => {
@@ -45,22 +41,13 @@ describe("sandbox-run.sh", () => {
   });
 });
 
-describe("Containerfiles \u2014 mise", () => {
+describe("Containerfile \u2014 mise", () => {
   const containerfilePath = join(import.meta.dir, "../../container/Containerfile");
   const containerfileContent = readFileSync(containerfilePath, "utf-8");
-
-  const containerfileMistralPath = join(import.meta.dir, "../../container/Containerfile.mistral");
-  const containerfileMistralContent = readFileSync(containerfileMistralPath, "utf-8");
 
   it("ut-1: container/Containerfile contains all three mise install lines", () => {
     expect(containerfileContent).toContain("curl https://mise.run | sh");
     expect(containerfileContent).toContain('ENV PATH="/home/agent/.local/bin');
     expect(containerfileContent).toContain("mise --version");
-  });
-
-  it("ut-2: container/Containerfile.mistral contains all three mise install lines", () => {
-    expect(containerfileMistralContent).toContain("curl https://mise.run | sh");
-    expect(containerfileMistralContent).toContain('ENV PATH="/home/agent/.local/bin');
-    expect(containerfileMistralContent).toContain("mise --version");
   });
 });
