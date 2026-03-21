@@ -1,9 +1,9 @@
 export { runTask } from "./runner";
+export { runInteractive } from "./interactive";
 export { getAuthEnv } from "./auth";
 export { createWorktree, removeWorktree, prepareWorktree } from "./worktree";
-export { spawnSandbox, stopContainer, teardownContainer, getSeccompProfile, setContainerDir, rebuildSandboxImage, installRuntimes, installDepsInShadow } from "./container";
+export { spawnSandbox, stopContainer, teardownContainer, getSeccompProfile, setContainerDir, rebuildSandboxImage, buildProjectImage, installRuntimes, installDepsInShadow, projectImageName } from "./container";
 export type { SpawnSandboxOpts } from "./container";
-export { parseOutput, buildClaudeCommand } from "./output";
 export { ensureProxy, stopProxy } from "./proxy";
 export type { ScopedAllowRule } from "./proxy";
 export { detectLanguage, getRegistryHostsForLanguage, getMiseToolsForLanguages, getShadowDirsForLanguages } from "./detect-language";

@@ -64,6 +64,59 @@ async function streamLines(
   if (buf.trim()) onLine(buf);
 }
 
+export function projectImageName(projectRoot: string, provider: string): string {
+  const hash = Bun.hash(projectRoot).toString(16).slice(0, 8);
+  return `sandbox-proj-${provider}-${hash}`;
+}
+
+// Build a project-specific image by layering packages on top of the provider's base image.
+// Much faster than a full Containerfile build — only adds one layer.
+export async function buildProjectImage(
+  packages: string[],
+  targetImage: string,
+  fromImage: string,
+  packageManager: "apt" | "apk",
+  onLog?: (line: string) => void,
+): Promise<{ ok: boolean; error?: string }> {
+  const installCmd = packageManager === "apt"
+    ? `apt-get update && apt-get install -y --no-install-recommends ${packages.join(" ")} && rm -rf /var/lib/apt/lists/*`
+    : `apk add --no-cache ${packages.join(" ")}`;
+
+  const dockerfile = [
+    `FROM ${fromImage}`,
+    "USER root",
+    `RUN ${installCmd}`,
+    "USER agent",
+  ].join("\n");
+
+  const packagesHash = Bun.hash([...packages].sort().join(",")).toString(16);
+  const proc = Bun.spawn(
+    ["podman", "build", "-t", targetImage, "--label", `ysa.packages=${packagesHash}`, "-f", "-", "."],
+    { stdin: new TextEncoder().encode(dockerfile), stdout: "pipe", stderr: "pipe" },
+  );
+
+  const errLines: string[] = [];
+  await Promise.all([
+    streamLines(proc.stdout, (line) => { onLog?.(line); }),
+    streamLines(proc.stderr, (line) => { onLog?.(line); errLines.push(line); }),
+    proc.exited,
+  ]);
+
+  const ok = proc.exitCode === 0;
+  return { ok, error: ok ? undefined : errLines.join("\n").trim() };
+}
+
+export async function getImagePackagesHash(image: string): Promise<string | null> {
+  const proc = Bun.spawn(
+    ["podman", "image", "inspect", image, "--format", "{{index .Labels \"ysa.packages\"}}"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const stdout = await new Response(proc.stdout).text();
+  await proc.exited;
+  const val = stdout.trim();
+  return val || null;
+}
+
 export async function rebuildSandboxImage(
   apkPackages: string[],
   image: string = "sandbox-claude",
@@ -86,8 +139,10 @@ export async function rebuildSandboxImage(
   }
 
   const extraPackages = apkPackages.join(" ");
+  const packagesHash = Bun.hash([...apkPackages].sort().join(",")).toString(16);
   const proc = Bun.spawn([
     "podman", "build", "-t", image,
+    "--label", `ysa.packages=${packagesHash}`,
     "--build-arg", `EXTRA_PACKAGES=${extraPackages}`,
     "-f", `${CONTAINER_DIR}/Containerfile`,
     `${CONTAINER_DIR}/`,
@@ -245,8 +300,11 @@ export interface SpawnSandboxOpts {
   agentImage?: string;        // container image name, e.g. "sandbox-claude" or "sandbox-mistral"
   provider?: string;          // provider id, used for session ID extraction
   extraPodEnv?: string;       // opaque "-e KEY=val -e KEY2=val2" string forwarded verbatim to podman run
+  extraLabels?: Record<string, string>; // extra podman labels added to the container (caller-defined, for filtering)
   shadowDirs?: string[];      // forwarded as SHADOW_DIRS env var to sandbox-run.sh
   miseVolume?: string;        // name of the pre-populated mise-installs volume to mount
+  sessionVolume?: string;     // override session volume name (for resume/refine across containers)
+  interactive?: boolean;      // attach stdin/tty for direct terminal use
 }
 
 export async function spawnSandbox(opts: SpawnSandboxOpts) {
@@ -260,6 +318,9 @@ export async function spawnSandbox(opts: SpawnSandboxOpts) {
   if (opts.extraPodEnv) env.EXTRA_POD_ENV = opts.extraPodEnv;
   if (opts.shadowDirs && opts.shadowDirs.length > 0) env.SHADOW_DIRS = opts.shadowDirs.join(" ");
   if (opts.miseVolume) env.MISE_VOLUME = opts.miseVolume;
+  if (opts.sessionVolume) env.SESSION_VOLUME = opts.sessionVolume;
+  if (opts.interactive) env.INTERACTIVE = "1";
+  if (opts.extraLabels) env.EXTRA_LABELS = Object.entries(opts.extraLabels).map(([k, v]) => `${k}=${v}`).join(" ");
 
   return Bun.spawn(
     [
@@ -274,19 +335,22 @@ export async function spawnSandbox(opts: SpawnSandboxOpts) {
     {
       cwd: opts.cwd,
       env,
-      stdout: "ignore",
-      stderr: "ignore",
+      stdin: opts.interactive ? "inherit" : "ignore",
+      stdout: opts.interactive ? "inherit" : "ignore",
+      stderr: opts.interactive ? "inherit" : "ignore",
     },
   );
 }
 
 export async function stopContainer(
   id: string,
-  opts?: { logPath?: string; label?: string; provider?: string },
+  opts?: { logPath?: string; label?: string; provider?: string; labels?: Record<string, string> },
 ): Promise<string | null> {
-  const label = opts?.label ?? "task";
+  const filters = opts?.labels
+    ? Object.entries(opts.labels).map(([k, v]) => `--filter label=${k}=${v}`).join(" ")
+    : `--filter label=${opts?.label ?? "task"}=${id}`;
   await runShell(
-    `podman stop $(podman ps -q --filter label=${label}=${id}) 2>/dev/null || true`,
+    `podman ps -aq ${filters} | xargs podman rm -f 2>/dev/null || true`,
   );
 
   let sessionId: string | null = null;
@@ -301,11 +365,13 @@ export async function stopContainer(
 
 export async function teardownContainer(
   id: string,
-  opts?: { label?: string },
+  opts?: { label?: string; labels?: Record<string, string> },
 ): Promise<void> {
-  const label = opts?.label ?? "task";
+  const filters = opts?.labels
+    ? Object.entries(opts.labels).map(([k, v]) => `--filter label=${k}=${v}`).join(" ")
+    : `--filter label=${opts?.label ?? "task"}=${id}`;
   await runShell(
-    `podman stop $(podman ps -q --filter label=${label}=${id}) 2>/dev/null || true`,
+    `podman ps -aq ${filters} | xargs podman rm -f 2>/dev/null || true`,
   );
   await runShell(
     `podman volume ls --format '{{.Name}}' | grep -- '-${id}$' | xargs podman volume rm 2>/dev/null || true`,

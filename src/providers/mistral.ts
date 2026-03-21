@@ -27,10 +27,10 @@ const VIBE_TOOL_NAMES = new Set(Object.values(TOOL_MAP));
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 async function getMistralAuthEnv(): Promise<Record<string, string>> {
-  const { getApiKey } = await import("../api/keystore");
+  const { getApiKey } = await import("../cli/keystore");
   const apiKey = await getApiKey("mistral");
   if (!apiKey) {
-    throw new Error("Mistral API key is not configured. Set it in Settings.");
+    throw new Error("Mistral API key not configured. Run: ysa config set mistral-key <key>");
   }
   return { MISTRAL_API_KEY: apiKey };
 }
@@ -218,6 +218,7 @@ export const mistralAdapter: ProviderAdapter = {
   extractSessionId: () => null,
 
   containerImage: "sandbox-mistral",
+  packageManager: "apt",
   bypassHosts: ["api.mistral.ai"],
 
   initContainerConfig(opts?: { model?: string }): ContainerConfig {

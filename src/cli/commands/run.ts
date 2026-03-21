@@ -1,92 +1,159 @@
 import { join } from "path";
-import { eq } from "drizzle-orm";
 import { runTask } from "../../runtime/runner";
-import { getDb, schema } from "../../db";
-import { runMigrations } from "../../db/migrate";
+import { runInteractive } from "../../runtime/interactive";
+import { resolveProjectRoot } from "../git-root";
 import type { RunConfig } from "../../types";
+import type { ParsedLogEntry } from "../../providers/types";
+
+function formatDuration(ms: number): string {
+  if (ms < 60000) return `${(ms / 1000).toFixed(0)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return `${m}m ${s}s`;
+}
+
+function renderEvent(entry: ParsedLogEntry, verbose: boolean): void {
+  if (entry.type === "assistant" && entry.text) {
+    const firstLine = entry.text.split("\n")[0].trim();
+    if (firstLine) console.log(`  \x1b[90m→\x1b[0m ${firstLine}`);
+  } else if (verbose && entry.type === "tool_call" && entry.tool) {
+    const detail = entry.text ? ` ${entry.text}` : "";
+    console.log(`  \x1b[90m[${entry.tool}${detail}]\x1b[0m`);
+  }
+}
+
+async function readLine(): Promise<string> {
+  return new Promise((resolve) => {
+    let buf = "";
+    process.stdin.setEncoding("utf-8");
+    process.stdin.resume();
+    const onData = (chunk: string) => {
+      buf += chunk;
+      const nl = buf.indexOf("\n");
+      if (nl !== -1) {
+        process.stdin.pause();
+        process.stdin.removeListener("data", onData);
+        resolve(buf.slice(0, nl).trim());
+      }
+    };
+    process.stdin.on("data", onData);
+  });
+}
 
 export async function runCommand(
   prompt: string,
   opts: {
     branch: string;
-    project: string;
+    project?: string;
     maxTurns: string;
     network: string;
     tools?: string;
+    quiet?: boolean;
+    verbose?: boolean;
+    interactive?: boolean;
+    allowCommit?: boolean;
   },
 ) {
-  runMigrations();
-  const db = getDb();
+  const projectRoot = await resolveProjectRoot(opts.project);
   const taskId = crypto.randomUUID();
-  const worktreePrefix = join(opts.project, ".ysa", "worktrees/");
+  const worktreePrefix = join(projectRoot, ".ysa", "worktrees/");
+  const worktreePath = `${worktreePrefix}${taskId}`;
 
-  console.log(`Task ${taskId.slice(0, 8)} starting...`);
-  console.log(`  Branch: ${opts.branch}`);
-  console.log(`  Network: ${opts.network}`);
-  console.log(`  Max turns: ${opts.maxTurns}`);
-  console.log();
+  if (opts.interactive) {
+    await runInteractive({
+      taskId,
+      prompt,
+      branch: opts.branch,
+      projectRoot,
+      worktreePrefix,
+      provider: "claude",
+      networkPolicy: opts.network as "none" | "strict" | "custom",
+    });
+    return;
+  }
 
   const config: RunConfig = {
     taskId,
     prompt,
     branch: opts.branch,
-    projectRoot: opts.project,
+    projectRoot,
     worktreePrefix,
     provider: "claude",
     maxTurns: parseInt(opts.maxTurns),
     allowedTools: opts.tools?.split(","),
     networkPolicy: opts.network as "none" | "strict" | "custom",
+    allowCommit: opts.allowCommit,
   };
 
-  db.insert(schema.tasks)
-    .values({
-      task_id: taskId,
-      prompt,
-      status: "running",
-      branch: opts.branch,
-      worktree: `${worktreePrefix}${taskId}`,
-      network_policy: opts.network ?? "none",
-      started_at: new Date().toISOString(),
-    })
-    .run();
+  const runWithStreaming = async (runConfig: RunConfig) => {
+    return runTask(runConfig, {
+      onProgress: (msg) => {
+        if (!opts.quiet) console.log(`  \x1b[90m${msg}\x1b[0m`);
+      },
+      onEvent: (entry: ParsedLogEntry) => {
+        if (!opts.quiet) renderEvent(entry, !!opts.verbose);
+      },
+    });
+  };
 
-  try {
-    const result = await runTask(config);
+  const result = await runWithStreaming(config);
 
-    db.update(schema.tasks)
-      .set({
-        status: result.status,
-        session_id: result.session_id,
-        error: result.error,
-        failure_reason: result.failure_reason,
-        log_path: result.log_path,
-        finished_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .where(eq(schema.tasks.task_id, taskId))
-      .run();
-
-    console.log();
-    console.log(`Task ${taskId.slice(0, 8)} ${result.status}`);
-    console.log(`  Duration: ${(result.duration_ms / 1000).toFixed(1)}s`);
-    if (result.session_id) console.log(`  Session: ${result.session_id}`);
-    if (result.error) console.log(`  Error: ${result.error}`);
-    console.log(`  Log: ${result.log_path}`);
-
-    process.exit(result.status === "completed" ? 0 : 1);
-  } catch (err: any) {
-    db.update(schema.tasks)
-      .set({
-        status: "failed",
-        error: err.message,
-        failure_reason: "infrastructure",
-        finished_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .where(eq(schema.tasks.task_id, taskId))
-      .run();
-
-    console.error(`Task failed: ${err.message}`);
-    process.exit(1);
+  console.log();
+  if (result.status === "completed") {
+    console.log(`\x1b[32m✓\x1b[0m Completed in ${formatDuration(result.duration_ms)}`);
+  } else {
+    const reason = result.failure_reason === "max_turns"
+      ? `max turns reached (${opts.maxTurns})`
+      : result.error ?? result.failure_reason ?? "unknown";
+    console.log(`\x1b[31m✗\x1b[0m Failed — ${reason}`);
+    if (result.log_path) console.log(`  Logs: ${result.log_path}`);
   }
+
+  console.log(`  Files: ${worktreePath}`);
+  if (result.session_id) console.log(`  Session: ${result.session_id}`);
+
+  // Interactive follow-up loop (issue #42)
+  if (
+    result.status === "completed" &&
+    result.session_id &&
+    process.stdin.isTTY
+  ) {
+    let currentSessionId = result.session_id;
+    while (true) {
+      console.log();
+      process.stdout.write("  Follow up (or press Enter to exit): ");
+      const followUp = await readLine();
+      if (!followUp) {
+        console.log("Bye");
+        break;
+      }
+
+      console.log();
+      const refineResult = await runWithStreaming({
+        taskId: crypto.randomUUID(),
+        prompt: followUp,
+        branch: opts.branch,
+        projectRoot,
+        worktreePrefix,
+        provider: "claude",
+        maxTurns: parseInt(opts.maxTurns),
+        networkPolicy: opts.network as "none" | "strict" | "custom",
+        resumeSessionId: currentSessionId,
+        resumePrompt: followUp,
+        resumeWorktree: worktreePath,
+      });
+
+      console.log();
+      if (refineResult.status === "completed") {
+        console.log(`\x1b[32m✓\x1b[0m Completed in ${formatDuration(refineResult.duration_ms)}`);
+        if (refineResult.session_id) currentSessionId = refineResult.session_id;
+      } else {
+        console.log(`\x1b[31m✗\x1b[0m Failed`);
+        if (refineResult.log_path) console.log(`  Logs: ${refineResult.log_path}`);
+        break;
+      }
+    }
+  }
+
+  process.exit(result.status === "completed" ? 0 : 1);
 }

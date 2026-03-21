@@ -1,46 +1,23 @@
-import { eq } from "drizzle-orm";
-import { getDb, schema } from "../../db";
-import { runMigrations } from "../../db/migrate";
+import { join } from "path";
+import { resolveProjectRoot } from "../git-root";
+import { resolveTaskId, logsDir, worktreesDir } from "../logs-dir";
 import { teardownContainer } from "../../runtime/container";
 import { removeWorktree } from "../../runtime/worktree";
 
-export async function teardownCommand(taskId: string) {
-  runMigrations();
-  const db = getDb();
+export async function teardownCommand(taskIdArg: string, opts: { project?: string } = {}) {
+  const projectRoot = await resolveProjectRoot(opts.project);
 
-  let task = db
-    .select()
-    .from(schema.tasks)
-    .where(eq(schema.tasks.task_id, taskId))
-    .get();
-
-  if (!task) {
-    const all = db.select().from(schema.tasks).all();
-    const match = all.find((t) => t.task_id.startsWith(taskId));
-    if (!match) {
-      console.error(`Task ${taskId} not found`);
-      process.exit(1);
-    }
-    task = match;
-    taskId = match.task_id;
+  const taskId = await resolveTaskId(projectRoot, taskIdArg);
+  if (!taskId) {
+    console.error(`Task ${taskIdArg} not found in ${logsDir(projectRoot)}`);
+    process.exit(1);
   }
+
+  const worktree = join(worktreesDir(projectRoot), taskId);
+  const branch = `task/${taskId.slice(0, 8)}`;
 
   console.log(`Tearing down task ${taskId.slice(0, 8)}...`);
-
   await teardownContainer(taskId);
-  if (task.worktree) {
-    // Derive projectRoot from worktree path
-    const projectRoot = task.worktree.replace(
-      new RegExp(`\\.ysa/worktrees/${taskId}$`),
-      "",
-    );
-    await removeWorktree(projectRoot, task.worktree, task.branch);
-  }
-
-  db.update(schema.tasks)
-    .set({ updated_at: new Date().toISOString() })
-    .where(eq(schema.tasks.task_id, taskId))
-    .run();
-
+  await removeWorktree(projectRoot, worktree, branch).catch(() => {});
   console.log(`Task ${taskId.slice(0, 8)} torn down.`);
 }

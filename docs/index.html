@@ -157,7 +157,7 @@
     .dot-y { background: #febc2e; }
     .dot-g { background: #28c840; }
 
-    .terminal-output { min-height: 140px; }
+    .terminal-output { height: 236px; overflow: hidden; }
 
     .t-prompt { color: var(--accent); }
     .t-info { color: var(--dim); }
@@ -253,6 +253,9 @@
       padding: 2rem;
       border: 1px solid var(--border);
       margin: -1px 0 0 -1px;
+      display: flex;
+      flex-direction: column;
+      min-height: 460px;
     }
 
     .point-label {
@@ -273,18 +276,28 @@
       font-size: 0.775rem;
       line-height: 1.75;
       font-weight: 300;
+      flex-grow: 1;
     }
 
     .point-stats {
-      margin-top: 1.5rem;
       display: flex;
       flex-direction: column;
-      gap: 0.3rem;
+      gap: 0.4rem;
+      border-top: 1px solid var(--border);
+      padding-top: 1rem;
+      margin-top: 1.5rem;
     }
 
-    .stat { font-size: 0.7rem; color: #3a3a3a; }
-    .stat span { color: #666; }
-    .stat .soon { color: #333; font-style: italic; }
+    .stat {
+      font-size: 0.7rem;
+      color: #555;
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+    }
+
+    .stat span { color: #888; }
+    .stat .soon { color: #444; font-style: italic; }
 
     .point-code {
       margin-top: 1.25rem;
@@ -390,7 +403,7 @@
   <nav>
     <a href="/" class="nav-logo">ysa</a>
     <ul class="nav-links">
-      <li><a href="#">docs</a></li>
+      <li><a href="/docs/">docs</a></li>
       <li><a href="https://github.com/ysa-ai/ysa" target="_blank" rel="noopener">github</a></li>
       <li><a href="https://ysa.run" class="nav-cta" style="opacity:0.5;cursor:default;pointer-events:none;">→ platform (soon)</a></li>
     </ul>
@@ -437,9 +450,9 @@
           </p>
           <div class="point-stats">
             <div class="stat">setup: <span>ysa setup</span></div>
-            <div class="stat">run: <span>ysa run "fix the auth bug"</span></div>
-            <div class="stat">streaming output: <span class="soon">coming soon</span></div>
-            <div class="stat">refine/continue: <span class="soon">coming soon</span></div>
+            <div class="stat">run: <span>ysa run "prompt"</span></div>
+            <div class="stat">refine: <span>ysa refine &lt;id&gt;</span></div>
+            <div class="stat">interactive: <span>ysa run -i</span></div>
           </div>
         </div>
         <div class="point">
@@ -453,7 +466,7 @@
           <div class="point-stats">
             <div class="stat">syscall whitelist: <span>190 calls</span></div>
             <div class="stat">capabilities: <span>--cap-drop ALL</span></div>
-            <div class="stat">network: <span>proxy-enforced, logged</span></div>
+            <div class="stat">network: <span>enforced + logged</span></div>
             <div class="stat">telemetry: <span>none</span></div>
           </div>
         </div>
@@ -468,7 +481,8 @@
           <div class="point-stats">
             <div class="stat">providers: <span>Claude, Mistral</span></div>
             <div class="stat">custom: <span>registerProvider()</span></div>
-            <div class="stat">languages: <span>via mise auto-detect</span></div>
+            <div class="stat">runtimes: <span>ysa runtime detect</span></div>
+            <div class="stat">model: <span>per-task override</span></div>
           </div>
         </div>
         <div class="point">
@@ -482,7 +496,8 @@
           <div class="point-stats">
             <div class="stat">license: <span>Apache 2.0</span></div>
             <div class="stat">package: <span><a href="https://www.npmjs.com/package/@ysa-ai/ysa" target="_blank" rel="noopener" style="color:#666;text-decoration:none;border-bottom:1px solid #333;">@ysa-ai/ysa</a></span></div>
-            <div class="stat">orchestration guide: <span class="soon">coming soon</span></div>
+            <div class="stat">api: <span>runTask / runInteractive</span></div>
+            <div class="stat">guide: <span><a href="/docs/api/" style="color:#888;text-decoration:none;border-bottom:1px solid #333;">read the docs</a></span></div>
           </div>
         </div>
       </div>
@@ -491,7 +506,7 @@
     <section class="funnel">
       <p class="funnel-label">// where to go from here</p>
       <div class="funnel-steps">
-        <a href="https://github.com/ysa-ai/ysa" target="_blank" rel="noopener" class="funnel-step">
+        <a href="/docs/guides/first-task" class="funnel-step">
           <span class="funnel-num">01 //</span>
           <div>
             <div class="funnel-title">Try the CLI</div>
@@ -499,18 +514,18 @@
           </div>
           <span class="funnel-arrow">→</span>
         </a>
-        <a href="#" class="funnel-step">
+        <a href="/docs/api/" class="funnel-step">
           <span class="funnel-num">02 //</span>
           <div>
             <div class="funnel-title">Build your own orchestration layer</div>
-            <div class="funnel-desc">Use <code>runTask()</code> as your primitive. Guide covers setup, providers, multi-language, result reading. <span style="color:#333">— coming soon</span></div>
+            <div class="funnel-desc">Use <code>runTask()</code> as your primitive. Guide covers setup, providers, multi-language, result reading.</div>
           </div>
           <span class="funnel-arrow">→</span>
         </a>
         <div class="funnel-step" style="opacity:0.45;cursor:default;">
           <span class="funnel-num">03 //</span>
           <div>
-            <div class="funnel-title">Use ysa platform <span style="color:#333;font-size:0.7rem;font-style:italic;">— coming soon</span></div>
+            <div class="funnel-title">Use ysa platform <span style="color:#888;font-size:0.7rem;font-style:italic;">— coming soon</span></div>
             <div class="funnel-desc">GitHub/GitLab integration, custom workflows, and team management out of the box. Built entirely on ysa.</div>
           </div>
           <span class="funnel-arrow" style="color:#333">→</span>

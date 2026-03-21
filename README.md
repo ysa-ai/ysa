@@ -4,6 +4,8 @@
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://open.ysa.run)
 
+**[Docs](https://open.ysa.run/docs/) · [CLI Reference](https://open.ysa.run/docs/cli/) · [API Reference](https://open.ysa.run/docs/api/) · [Guides](https://open.ysa.run/docs/guides/first-task)**
+
 > **Early development** — this repo is under active development. Expect breaking changes between releases.
 
 **ysa is a secure container runtime for AI coding agents — a CLI and SDK, nothing else.**
@@ -11,15 +13,12 @@
 Every agent runs in an isolated, rootless Podman container with a hardened sandbox, its own git worktree, and optional network policy enforcement. No cloud, no telemetry, no data leaving your machine.
 
 ```bash
-ysa setup          # one-time setup on a fresh machine
+npm install -g @ysa-ai/ysa
+ysa setup          # one-time setup: preflight, images, CA cert, network hooks
 ysa run "prompt"   # from any git repo, zero config
 ```
 
 If you want a fully-featured orchestration layer on top of ysa — GitLab/GitHub integration, multi-phase workflows, team management — ysa platform (coming soon at ysa.run) is built exactly this way.
-
-<p align="center"><img src="./docs/architecture-overview.svg" width="600" /></p>
-
-> [Detailed architecture diagram](./docs/architecture.svg)
 
 ---
 
@@ -47,34 +46,29 @@ If you want a fully-featured orchestration layer on top of ysa — GitLab/GitHub
 
 ## Roadmap
 
-The current repo still ships a local web dashboard alongside the CLI. That's going away. The plan:
+**Phase 1 — CLI improvements** ✓
+- ~~`ysa setup` — single turnkey command on a fresh machine (Podman check, image build, CA cert, OCI hooks, proxy smoke test)~~
+- ~~Git root auto-detection — `ysa run` walks up from CWD like `git` does, no config required~~
+- ~~Real-time streaming output during `ysa run`~~
+- ~~`ysa refine <id> "prompt"` — iterate on a completed task in the same session and worktree~~
+- ~~`ysa runtime` — per-project runtime/package management via `.ysa.toml`~~
 
-**Phase 1 — CLI improvements**
-- `ysa setup` — single turnkey command on a fresh machine (Podman check, image build, CA cert, OCI hooks, proxy smoke test)
-- Git root auto-detection — `ysa run` walks up from CWD like `git` does, no config required
-- Real-time streaming output during `ysa run`
-- `ysa refine <id> "prompt"` — iterate on a completed task in the same session and worktree
-- Auto mise pre-install when `.mise.toml` is detected
+**Phase 2 — Clean public SDK API** ✓
+- ~~Expose a stable, minimal `RunConfig` interface — no internal provider fields leaking to callers~~
+- ~~Proxy auto-start inside `runTask()` when `networkPolicy: "strict"` — works without running the server~~
 
-**Phase 2 — Clean public SDK API**
-- Expose a stable, minimal `RunConfig` interface — no internal provider fields leaking to callers
-- Proxy auto-start inside `runTask()` when `networkPolicy: "strict"` — works without running the server
+**Phase 3 — Orchestration guide** ✓
+- ~~Full API + CLI reference docs (VitePress)~~
+- ~~`runTask()`, providers, network policies, runtimes, review tasks~~
+- ~~Symphony integration guide — ysa as the secure execution layer under OpenAI Symphony~~
 
-**Phase 3 — Orchestration guide**
-- One doc, code-first, inspired by OpenAI Symphony: concept → code → done
-- Covers `runTask()`, providers, multi-language, result reading, basic orchestration loops
-- Written after the API is stable
-
-**After that:** the dashboard is removed from this repo. ysa becomes a pure runtime — CLI + SDK, Apache 2.0, no paid tier. ysa platform (coming soon at ysa.run) is the hosted orchestration layer built on top of it.
-
-> The license change will follow once the dashboard is stripped — the repo will move from its current license to Apache 2.0 fully, matching the landing page. The Apache 2.0 license is already reflected on [open.ysa.run](https://open.ysa.run) ahead of that change.
+**Next:** ysa platform (coming soon at ysa.run) is the hosted orchestration layer built on top of the ysa runtime.
 
 ---
 
 ## Requirements
 
-- [Bun](https://bun.sh) 1.2+
-- [Podman](https://podman.io) (rootless mode)
+- [Podman](https://podman.io) 5.x+ (rootless mode)
 - macOS or Linux
 - Windows support coming soon
 
@@ -83,36 +77,58 @@ The current repo still ships a local web dashboard alongside the CLI. That's goi
 ## Installation
 
 ```bash
+npm install -g @ysa-ai/ysa
+
+# First-time setup: preflight checks, CA cert, container images, network hooks
+ysa setup
+```
+
+`ysa setup` will verify Podman is installed and configured correctly, then build the container images (~2–3 min on first run). Re-run it any time to check your environment.
+
+**From source:**
+
+```bash
 git clone https://github.com/ysa-ai/ysa
 cd ysa
 bun install
-
-# Build the container images (one-time, ~2–3 min)
-bun run build:images
+bun run build
+ysa setup
 ```
 
 ## Quick start
 
 ```bash
-# Start the server (opens the web UI at http://localhost:4000)
-ysa
+# From inside any git repo — no config required
+ysa run "summarize this codebase"
 
-# Or run a task directly from the CLI
-ysa run "summarize this codebase" --branch main
+# Iterate on the result
+ysa refine <task-id> "now write tests for it"
 ```
-
-On first launch, the web UI will ask you to set a project root — the directory where your code lives. This is stored locally and never leaves your machine.
 
 ## CLI
 
 ```bash
-ysa                        # Start the web server + UI
-ysa run "prompt" [opts]    # Run a task
-ysa list                   # List tasks
-ysa logs <task-id>         # Stream logs for a task
-ysa stop <task-id>         # Stop a running task
-ysa teardown               # Remove all worktrees and containers
+ysa setup                          # First-run setup (preflight, images, CA cert, hooks)
+ysa run "prompt" [opts]            # Run a task
+ysa refine <task-id> "prompt"      # Continue/iterate on a completed task
+ysa list                           # List tasks
+ysa logs <task-id>                 # Stream logs for a task
+ysa stop <task-id>                 # Stop a running task
+ysa teardown <task-id>             # Remove task resources (container + worktree)
+ysa runtime <add|remove|list|detect> [tool]  # Manage per-project runtimes
 ```
+
+**`ysa run` options:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `-b, --branch <name>` | auto | Git branch name for the worktree |
+| `-m, --max-turns <n>` | `60` | Max agent turns |
+| `-n, --network <policy>` | `none` | Network policy: `none` \| `strict` |
+| `-q, --quiet` | — | Progress only, no agent output |
+| `-v, --verbose` | — | Show full log including tool calls |
+| `-i, --interactive` | — | Live terminal session inside the sandbox |
+| `--no-commit` | — | Prevent agent from committing (useful for review/analysis tasks) |
 
 ---
 
@@ -158,7 +174,15 @@ bash container/tests/security-test.sh --skip-network
 
 ## Language support
 
-ysa uses [mise](https://mise.jdx.dev) as a universal toolchain manager — one container image, any language runtime. Select languages in Settings and ysa provisions the runtimes into a shared cache volume at config time, so containers get the right toolchain without needing network access at task runtime.
+ysa uses [mise](https://mise.jdx.dev) as a universal toolchain manager — one container image, any language runtime. Configure runtimes per project with `ysa runtime` and ysa provisions the toolchain into the sandbox at task start:
+
+```bash
+ysa runtime detect          # auto-detect languages in the project
+ysa runtime add node@22     # add a specific runtime
+ysa runtime list            # show configured runtimes
+```
+
+Runtimes are stored in `.ysa.toml` at the project root.
 
 | Language | Runtime |
 |---|---|
@@ -178,14 +202,9 @@ ysa uses [mise](https://mise.jdx.dev) as a universal toolchain manager — one c
 
 ## Configuration
 
-All configuration is stored in `~/.ysa/core.db` (SQLite). No environment files needed.
+Global config is stored in `~/.ysa/` (token file, CA cert). No environment files needed.
 
-Settings managed through the web UI:
-- **Project root** — directory where worktrees are created
-- **Default provider / model** — pre-fill provider and model selection
-- **Default network policy** — Unrestricted or Restricted
-- **Languages** — select runtimes to provision into the shared mise cache
-- **Preferred terminal** — for the Sandbox Shell feature
+Per-project runtime config lives in `.ysa.toml` at the project root (managed via `ysa runtime`).
 
 ---
 
@@ -197,12 +216,8 @@ PRs welcome. See [CLAUDE.md](CLAUDE.md) for code conventions.
 
 ## License
 
-[Elastic License 2.0](LICENSE) — free to use internally and modify, including within commercial companies. You may not offer ysa as a hosted or managed service to third parties.
-
-### Container runtime
+[Apache License 2.0](LICENSE) — use it, modify it, build on it freely.
 
 The container security layer — `container/seccomp.json`, `container/git-safe-wrapper.sh`, `container/sandbox-run.sh`, `container/network-proxy.ts`, and related scripts — is intentionally transparent. Read them, audit them, run the test suites against your own setup. Security that can't be verified shouldn't be trusted.
-
-The plan is to extract this runtime into its own standalone repository under a permissive license (MIT or Apache 2.0), so anyone can build their own orchestration layer on top of it freely. If you're interested in doing that before then, the container artifacts are the right starting point.
 
 If you find a gap or want to contribute a hardening improvement, PRs are welcome.
