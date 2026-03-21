@@ -8,7 +8,6 @@ export default defineConfig({
   cleanUrls: true,
   themeConfig: {
     logo: { light: "/logo.svg", dark: "/logo.svg" },
-    logoLink: "https://open.ysa.run",
     nav: [
       { text: "CLI", link: "/cli/" },
       { text: "API", link: "/api/" },
