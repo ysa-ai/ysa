@@ -3,6 +3,7 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   title: "ysa",
   description: "Secure container runtime for AI coding agents. CLI and SDK — nothing else.",
+  base: "/docs/",
   appearance: "force-dark",
   cleanUrls: true,
   themeConfig: {
