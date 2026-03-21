@@ -3,7 +3,7 @@
   "version": "0.2.4",
   "type": "module",
   "description": "Run AI coding agents (Claude, Mistral, other providers coming soon) in parallel inside hardened, isolated containers with git worktree separation.",
-  "license": "Elastic-2.0",
+  "license": "Apache-2.0",
   "keywords": [
     "ai",
     "agent",
@@ -25,12 +25,7 @@
   },
   "files": [
     "src/",
-    "client/",
-    "container/",
-    "dist/",
-    "index.html",
-    "tsconfig.json",
-    "vite.config.ts"
+    "container/"
   ],
   "bin": {
     "ysa": "./src/cli/index.ts"
@@ -38,48 +33,25 @@
   "exports": {
     ".": "./src/index.ts",
     "./runtime": "./src/runtime/index.ts",
-    "./types": "./src/types.ts",
-    "./db": "./src/db/index.ts",
-    "./db/schema": "./src/db/schema.ts",
-    "./db/migrate": "./src/db/migrate.ts",
-    "./api": "./src/api/index.ts",
-    "./dashboard": "./src/dashboard/index.ts"
+    "./types": "./src/types.ts"
   },
   "scripts": {
-    "dev": "bunx concurrently -k -n server,client -c blue,green \"bun run dev:server\" \"bun run dev:client\"",
-    "dev:server": "bun --hot src/server/index.ts",
-    "dev:client": "bunx vite --host",
-    "build": "bunx vite build",
-    "build:images": "bash container/generate-ca.sh container && mkdir -p \"${CA_DIR:-.ysa/proxy-ca}\" && cp container/ca.pem \"${CA_DIR:-.ysa/proxy-ca}/ca.pem\" && cp container/ca-key.pem \"${CA_DIR:-.ysa/proxy-ca}/ca-key.pem\" && chmod 644 \"${CA_DIR:-.ysa/proxy-ca}/ca.pem\" && chmod 600 \"${CA_DIR:-.ysa/proxy-ca}/ca-key.pem\" && podman build -t sandbox-claude -f container/Containerfile container/ && podman build -t sandbox-mistral -f container/Containerfile.mistral container/ && podman build -t sandbox-proxy -f container/Containerfile.proxy container/ && rm -f container/ca-key.pem container/ca.pem && (podman rm -f ysa-proxy 2>/dev/null; podman image prune -f)",
-    "prepublishOnly": "bun run build",
-    "start": "bun src/server/index.ts",
-    "typecheck": "tsc --noEmit"
+    "build:images": "bash container/build-images.sh",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "docs": "vitepress dev docs",
+    "docs:build": "vitepress build docs"
   },
   "dependencies": {
-    "@hono/trpc-server": "^0.4.2",
-    "@tanstack/react-query": "^5.90.20",
-    "@trpc/client": "^11.0.0",
-    "@trpc/react-query": "^11.0.0",
-    "@trpc/server": "^11.0.0",
     "commander": "^13.1.0",
-    "drizzle-orm": "^0.44.0",
     "hono": "^4.11.9",
     "marked": "^17.0.2",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.1.18",
     "@types/bun": "^1.3.8",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.3",
-    "concurrently": "^9.2.1",
-    "drizzle-kit": "^0.30.0",
-    "tailwindcss": "^4.1.18",
     "typescript": "^5.8.3",
-    "vite": "^7.3.1"
+    "vitepress": "^1.6.3"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"

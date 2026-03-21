@@ -47,10 +47,31 @@ if [ -z "$HOST_IP" ]; then
 fi
 
 PROXY_PORT=3128
-# Server port: read from env or default to 4000
-SERVER_PORT="${SERVER_PORT:-4000}"
 
-echo "[oci-hook] Applying network policy rules for PID $PID (host: $HOST_IP)" >&2
+# Server port: read from OCI bundle config.json process.env (set by orchestrator).
+# /proc/$PID/environ is not the container env at createRuntime stage.
+BUNDLE=$(echo "$STATE" | jq -r '.bundle // empty')
+CONTAINER_SERVER_PORT=""
+if [ -n "$BUNDLE" ] && [ -f "$BUNDLE/config.json" ]; then
+  CONTAINER_SERVER_PORT=$(jq -r '.process.env[] | select(startswith("SERVER_PORT=")) | ltrimstr("SERVER_PORT=")' "$BUNDLE/config.json" 2>/dev/null | head -1) || true
+fi
+SERVER_PORT="${CONTAINER_SERVER_PORT:-${SERVER_PORT:-4000}}"
+
+# Derive host.containers.internal IP from the VM's own subnet.
+# On macOS Podman Machine, HOST_IP is on 192.168.127.x/24 and
+# host-gateway resolves to 192.168.127.254 inside slirp4netns containers.
+# We compute the .254 address from the same /24 as HOST_IP.
+# On Linux where HOST_IP is in a different range, HCI_IP stays empty (no extra rule needed).
+HCI_IP=""
+if echo "$HOST_IP" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+  NET_PREFIX="${HOST_IP%.*}"
+  CANDIDATE="${NET_PREFIX}.254"
+  if [ "$CANDIDATE" != "$HOST_IP" ]; then
+    HCI_IP="$CANDIDATE"
+  fi
+fi
+
+echo "[oci-hook] Applying network policy rules for PID $PID (host: $HOST_IP, hci: ${HCI_IP:-n/a}, server_port: $SERVER_PORT)" >&2
 
 # ── IPv4 rules ───────────────────────────────────────────────────────────────
 
@@ -68,6 +89,12 @@ $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$HOST_IP" --dport "$PRO
 
 # Allow TCP to server for prompt/API (host.containers.internal:SERVER_PORT)
 $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$HOST_IP" --dport "$SERVER_PORT" -j ACCEPT
+
+# Allow traffic to host.containers.internal (.254 in macOS Podman Machine) if it differs from HOST_IP.
+if [ -n "$HCI_IP" ] && [ "$HCI_IP" != "$HOST_IP" ]; then
+  $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$HCI_IP" --dport "$PROXY_PORT" -j ACCEPT
+  $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$HCI_IP" --dport "$SERVER_PORT" -j ACCEPT
+fi
 
 # Allow the slirp4netns gateway too — it may differ from HOST_IP and is used for DNS.
 # Also covers the case where proxy/server are reachable via the gateway IP.

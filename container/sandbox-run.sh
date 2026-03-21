@@ -90,7 +90,8 @@ GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
 GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 
 # -- Session volume ------------------------------------------------------------
-SESSION_VOLUME="task-session-${TASK_ID}"
+# SESSION_VOLUME can be overridden by caller (e.g. to reuse session across refine runs)
+SESSION_VOLUME="${SESSION_VOLUME:-task-session-${TASK_ID}}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
 
 # -- mise installs volume ------------------------------------------------------
@@ -138,8 +139,6 @@ echo "Network: $NETWORK_POLICY" >&2
 echo "Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
 echo "Timeout: ${TIMEOUT}s" >&2
 echo "Args:$QUOTED_ARGS" >&2
-echo "OAuth: ${CLAUDE_CODE_OAUTH_TOKEN:+set}" >&2
-echo "API Key: ${ANTHROPIC_API_KEY:+set}" >&2
 echo "=========================" >&2
 
 # -- Runtime version checks ----------------------------------------------------
@@ -241,10 +240,25 @@ fi
 
 progress "Starting container (network: $NETWORK_POLICY)..."
 
+# -- Interactive mode -----------------------------------------------------------
+# INTERACTIVE=1: attach stdin/tty, pipe output to terminal AND log file.
+# Default 0 = headless (unchanged behaviour).
+INTERACTIVE_FLAGS=""
+if [ "${INTERACTIVE:-0}" = "1" ]; then
+  INTERACTIVE_FLAGS="-i -t"
+fi
+
 # -- Launch container ----------------------------------------------------------
+CONTAINER_NAME="sandbox-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
+EXTRA_LABEL_FLAGS=""
+for kv in ${EXTRA_LABELS:-}; do
+  EXTRA_LABEL_FLAGS="$EXTRA_LABEL_FLAGS --label $kv"
+done
 podman run --rm \
-  --name "sandbox-${TASK_ID}" \
+  $INTERACTIVE_FLAGS \
+  --name "$CONTAINER_NAME" \
   --label "task=${TASK_ID}" \
+  $EXTRA_LABEL_FLAGS \
   --userns=keep-id \
   --network slirp4netns \
   --add-host host.containers.internal:host-gateway \
@@ -274,6 +288,7 @@ podman run --rm \
   -e PROMPT_TOKEN="${PROMPT_TOKEN:-}" \
   ${EXTRA_POD_ENV:-} \
   -e ALLOWED_TOOLS="$ALLOWED_TOOLS_VALUE" \
+  -e INTERACTIVE="${INTERACTIVE:-0}" \
   -e ENABLE_TOOL_SEARCH=false \
   -e GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Sandbox Agent}" \
   -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-agent@sandbox}" \
@@ -332,7 +347,9 @@ podman run --rm \
         \$AGENT_BIN $QUOTED_ARGS
         ;;
       *)
-        if [ -n \"\$PROMPT_URL\" ]; then
+        if [ \"\${INTERACTIVE:-0}\" = \"1\" ]; then
+          \$AGENT_BIN $QUOTED_ARGS
+        elif [ -n \"\$PROMPT_URL\" ]; then
           _progress 'Fetching prompt...'
           PROMPT=\$(curl --max-time 10 --connect-timeout 5 -sf -H \"Authorization: Bearer \$PROMPT_TOKEN\" \"\$PROMPT_URL\")
           if [ -z \"\$PROMPT\" ]; then
@@ -347,7 +364,7 @@ podman run --rm \
         fi
         ;;
     esac
-  " 2>&1 | $TEE_CMD > /dev/null
+  " 2>&1 | $TEE_CMD
 
 EXIT_CODE=${PIPESTATUS[0]}
 

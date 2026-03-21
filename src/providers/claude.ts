@@ -200,7 +200,7 @@ async function getOAuthToken(): Promise<string> {
 }
 
 async function getClaudeAuthEnv(): Promise<Record<string, string>> {
-  const { getApiKey } = await import("../api/keystore");
+  const { getApiKey } = await import("../cli/keystore");
   const apiKey = await getApiKey("anthropic");
   if (apiKey) {
     return { ANTHROPIC_API_KEY: apiKey };
@@ -396,6 +396,13 @@ fi
 function buildClaudeCommand(opts: CommandOpts): string[] {
   const args: string[] = [];
 
+  if (opts.interactive) {
+    if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
+    if (opts.model) args.push("--model", opts.model);
+    args.push("--add-dir", "/workspace", "--dangerously-skip-permissions");
+    return args;
+  }
+
   if (opts.resumeSessionId) {
     args.push("--resume", opts.resumeSessionId);
     if (!opts.usePromptUrl) {
@@ -442,6 +449,7 @@ export const claudeAdapter: ProviderAdapter = {
   extractSessionId: extractClaudeSessionId,
 
   containerImage: "sandbox-claude",
+  packageManager: "apt",
   bypassHosts: ["api.anthropic.com", "statsig.anthropic.com"],
 
   initContainerConfig(_opts?: { model?: string }): ContainerConfig {

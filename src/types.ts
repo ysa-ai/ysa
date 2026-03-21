@@ -29,11 +29,17 @@ export interface RunConfig {
   allowedTools?: string[]; // override tool whitelist
   resumeSessionId?: string; // for continue after max_turns
   resumePrompt?: string; // custom prompt for session resume (refine)
+  resumeWorktree?: string; // existing worktree to reuse when resuming (skips creation)
   networkPolicy?: "none" | "strict" | "custom"; // default "none"
   promptUrl?: string; // URL for container to fetch prompt from
   shadowDirs?: string[]; // dirs to shadow with per-task volumes (default: ["node_modules"])
   miseVolume?: string;  // pre-populated mise-installs volume to mount (set at project settings save time)
   worktreeFiles?: string[]; // untracked files to copy from project root into worktree
+  extraEnv?: Record<string, string>; // extra env vars injected into the container (e.g. DASHBOARD_URL, ISSUE_ID)
+  extraLabels?: Record<string, string>; // extra podman labels on the container (for filtering by stop/teardown)
+  proxyRules?: import("./runtime/proxy").ScopedAllowRule[]; // per-task scoped proxy allow rules
+  serverPort?: number; // host server port to bypass in proxy (e.g. dashboard port)
+  allowCommit?: boolean; // whether the agent can commit to git (default: true)
 }
 
 // What runTask() returns

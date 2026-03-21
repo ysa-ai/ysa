@@ -22,5 +22,9 @@ bun.lockb
 container/ca.pem
 container/ca-key.pem
 
+# VitePress build artifacts
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
 # Runtime data
 .ysa/

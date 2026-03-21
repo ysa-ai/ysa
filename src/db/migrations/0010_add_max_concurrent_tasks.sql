@@ -1,1 +1,0 @@
-ALTER TABLE config ADD COLUMN max_concurrent_tasks INTEGER NOT NULL DEFAULT 10;

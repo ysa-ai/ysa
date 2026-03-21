@@ -18,6 +18,7 @@ export interface ProviderModel {
 }
 
 export interface CommandOpts {
+  interactive?: boolean; // skip stream-json/verbose/max-turns for direct terminal use
   prompt?: string;
   maxTurns?: number;
   allowedTools?: string;
@@ -56,6 +57,7 @@ export interface ProviderAdapter {
   extractSessionId(logContent: string): string | null;
 
   containerImage: string;
+  packageManager: "apt" | "apk";
   bypassHosts: string[];
   initContainerConfig(opts?: { model?: string }): ContainerConfig;
 
