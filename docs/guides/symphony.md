@@ -1,9 +1,5 @@
 # Symphony + ysa
 
-::: warning Experimental
-This guide has not been fully tested end-to-end. Treat it as a reference for the integration approach — validate before using in production.
-:::
-
 [OpenAI Symphony](https://github.com/openai/symphony) is an orchestration daemon that monitors a Linear project, picks up issues automatically, and runs coding agents against them. It handles scheduling, retries, stall detection, and PR delivery — but provides no sandboxing of its own.
 
 ysa fills that gap: every agent task runs inside a hardened Podman container with a seccomp profile, network proxy, and a git worktree isolated from your main branch.
@@ -12,7 +8,7 @@ There are two ways to combine them:
 
 **Option A — Elixir Symphony + runner shim**: Use the official Elixir reference implementation and point its `codex.command` at a small TypeScript adapter that calls `runTask()`.
 
-**Option B — TypeScript orchestrator** *(recommended)*: Reimplement the Symphony spec natively in TypeScript and call `runTask()` directly. No Elixir, no protocol translation. [Jump to that section.](#alternative-typescript-orchestrator)
+**Option B — TypeScript orchestrator** *(recommended)*: Reimplement the Symphony spec natively in TypeScript and call `runTask()` directly. No Elixir, no protocol translation. A working example is available at [ysa-symphony-example](https://github.com/ysa-ai/ysa-symphony-example). [Jump to that section.](#alternative-typescript-orchestrator)
 
 ## How Symphony runs agents
 
@@ -219,9 +215,7 @@ The orchestrator needs to implement:
 
 The [Symphony SPEC.md](https://github.com/openai/symphony/blob/main/SPEC.md) defines the full contract. An agent can implement it from the spec directly.
 
-::: info Coming soon
-A ysa-native TypeScript orchestrator is planned. It will expose the same Linear → agent → PR pipeline as Symphony with `runTask()` as the execution primitive, no Elixir required.
-:::
+**[ysa-symphony-example](https://github.com/ysa-ai/ysa-symphony-example)** is a complete, working implementation of this approach. It includes a Linear poller, concurrency management, exponential backoff, and a `runner/ysa.ts` that calls `runTask()` directly. Clone it to get started immediately.
 
 ## Related
 
