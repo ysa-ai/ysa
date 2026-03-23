@@ -54,6 +54,7 @@ export default defineConfig({
           { text: "Review Tasks", link: "/guides/review-tasks" },
           { text: "Providers", link: "/guides/providers" },
           { text: "Symphony Integration", link: "/guides/symphony" },
+          { text: "ysa vs OpenShell", link: "/guides/openshell" },
         ],
       },
     ],
