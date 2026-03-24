@@ -12,13 +12,7 @@
 
 Every agent runs in an isolated, rootless Podman container with a hardened sandbox, its own git worktree, and optional network policy enforcement. No cloud, no telemetry, no data leaving your machine.
 
-```bash
-npm install -g @ysa-ai/ysa
-ysa setup          # one-time setup: preflight, images, CA cert, network hooks
-ysa run "prompt"   # from any git repo, zero config
-```
-
-If you want a fully-featured orchestration layer on top of ysa — GitLab/GitHub integration, multi-phase workflows, team management — ysa platform (coming soon at ysa.run) is built exactly this way.
+![ysa demo](docs/output.gif)
 
 ---
 
@@ -44,27 +38,6 @@ If you want a fully-featured orchestration layer on top of ysa — GitLab/GitHub
 
 ---
 
-## Roadmap
-
-**Phase 1 — CLI improvements** ✓
-- ~~`ysa setup` — single turnkey command on a fresh machine (Podman check, image build, CA cert, OCI hooks, proxy smoke test)~~
-- ~~Git root auto-detection — `ysa run` walks up from CWD like `git` does, no config required~~
-- ~~Real-time streaming output during `ysa run`~~
-- ~~`ysa refine <id> "prompt"` — iterate on a completed task in the same session and worktree~~
-- ~~`ysa runtime` — per-project runtime/package management via `.ysa.toml`~~
-
-**Phase 2 — Clean public SDK API** ✓
-- ~~Expose a stable, minimal `RunConfig` interface — no internal provider fields leaking to callers~~
-- ~~Proxy auto-start inside `runTask()` when `networkPolicy: "strict"` — works without running the server~~
-
-**Phase 3 — Orchestration guide** ✓
-- ~~Full API + CLI reference docs (VitePress)~~
-- ~~`runTask()`, providers, network policies, runtimes, review tasks~~
-- ~~Symphony integration guide — ysa as the secure execution layer under OpenAI Symphony~~
-
-**Next:** ysa platform (coming soon at ysa.run) is the hosted orchestration layer built on top of the ysa runtime.
-
----
 
 ## Requirements
 

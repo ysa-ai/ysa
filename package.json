@@ -28,7 +28,7 @@
     "container/"
   ],
   "bin": {
-    "ysa": "./src/cli/index.ts"
+    "ysa": "src/cli/index.ts"
   },
   "exports": {
     ".": "./src/index.ts",
