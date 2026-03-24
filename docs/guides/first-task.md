@@ -20,27 +20,15 @@ Or with bun:
 bun install -g @ysa-ai/ysa
 ```
 
-## 2. Build container images
-
-Container images are not published — you build them locally:
-
-```bash
-git clone https://github.com/ysa-ai/ysa
-cd ysa
-bun run build:images
-```
-
-This builds `sandbox-claude`, `sandbox-mistral`, and `sandbox-proxy`.
-
-## 3. Run setup
+## 2. Run setup
 
 ```bash
 ysa setup
 ```
 
-This checks Podman, generates the CA cert at `~/.ysa/proxy-ca/`, installs OCI network hooks, and runs a smoke test. Fix any reported issues before continuing.
+This checks Podman, generates the CA cert at `~/.ysa/proxy-ca/`, builds any missing container images (`sandbox-claude`, `sandbox-mistral`, `sandbox-proxy`), installs OCI network hooks, and runs a smoke test. Fix any reported issues before continuing.
 
-## 4. Configure runtimes (optional)
+## 3. Configure runtimes (optional)
 
 If your project needs specific runtimes inside the container — see the [full list of supported languages](/guides/runtimes#supported-languages):
 
@@ -57,7 +45,7 @@ ysa runtime add node@22
 
 This writes `.ysa.toml` — commit it so everyone on your team gets the same sandbox.
 
-## 5. Run your first task
+## 4. Run your first task
 
 ```bash
 cd /path/to/your/project
@@ -71,7 +59,7 @@ ysa will:
 4. Stream output to your terminal
 5. Print the worktree path and session ID when done
 
-## 6. Review the result
+## 5. Review the result
 
 The worktree at `.ysa/worktrees/<task-id>` is **bind-mounted** into the container as `/workspace`. This means the agent writes directly to your host filesystem — any file it creates or modifies is visible on your machine in real time, with no commit or copy step needed to inspect the result.
 
@@ -100,7 +88,7 @@ View the full agent log:
 ysa logs <task-id-prefix>
 ```
 
-## 7. Clean up
+## 6. Clean up
 
 ```bash
 ysa teardown <task-id-prefix>
