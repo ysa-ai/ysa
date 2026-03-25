@@ -169,6 +169,11 @@ cleanup_monitor() {
     wait "$MONITOR_PID" 2>/dev/null || true
   fi
   rm -f "${SETTINGS_TMP:-}"
+  # Always restore host-side git worktree pointer so git prune doesn't orphan it
+  if [ -d "$REPO_GIT/worktrees/$WORKTREE_NAME" ]; then
+    echo "gitdir: $REPO_GIT/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
+    echo "$WORKTREE/.git" > "$REPO_GIT/worktrees/$WORKTREE_NAME/gitdir"
+  fi
 }
 trap cleanup_monitor EXIT
 
@@ -371,9 +376,5 @@ EXIT_CODE=${PIPESTATUS[0]}
 echo "" >&2
 echo "Finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
 echo "Exit code: $EXIT_CODE" >&2
-
-# -- Restore host worktree pointer ---------------------------------------------
-echo "gitdir: $REPO_GIT/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
-echo "$WORKTREE/.git" > "$REPO_GIT/worktrees/$WORKTREE_NAME/gitdir"
 
 exit $EXIT_CODE
