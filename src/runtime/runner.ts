@@ -79,8 +79,7 @@ async function* tailLog(
 export async function runTask(config: RunConfig, opts?: RunOptions): Promise<RunResult> {
   const taskId = config.taskId;
   const worktree = config.resumeWorktree ?? `${config.worktreePrefix}${taskId}`;
-  const branch = `task/${taskId.slice(0, 8)}`;
-  const baseBranch = config.branch;
+  const branch = config.branch ?? `task/${taskId.slice(0, 8)}`;
   const gitDir = join(config.projectRoot, ".git");
   const logDir = join(config.projectRoot, ".ysa", "logs");
   const logPath = join(logDir, `${taskId}.log`);
@@ -98,7 +97,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Run
     emitProgress("Creating git worktree...");
     // Remove stale worktree from a previous failed/stopped run before recreating
     await removeWorktree(config.projectRoot, worktree, branch).catch(() => {});
-    const wt = await createWorktree(config.projectRoot, worktree, branch, baseBranch);
+    const wt = await createWorktree(config.projectRoot, worktree, branch);
     if (!wt.ok) {
       return {
         task_id: taskId,
