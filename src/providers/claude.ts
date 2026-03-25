@@ -332,6 +332,10 @@ function parseClaudeOutput(logContent: string, skipLinesBefore = 0): ParsedOutpu
       maxTurnsReached = true;
     }
 
+    if (parsed.type === "result" && parsed.subtype === "success") {
+      lastError = null;
+    }
+
     // JSON error objects (e.g. {"type":"error","message":"..."})
     if (parsed.type === "error" && parsed.message) {
       lastError = String(parsed.message).slice(0, 300);
