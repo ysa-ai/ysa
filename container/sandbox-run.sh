@@ -103,8 +103,14 @@ MISE_VOLUME="${MISE_VOLUME:-mise-installs}"
 # SHADOW_DIRS is a space-separated list of workspace-relative dirs to shadow with
 # per-task named volumes.  Default: node_modules (backward compatible).
 SHADOW_MOUNTS=""
+FIRST_SHADOW=1
 for dir in ${SHADOW_DIRS:-node_modules}; do
-  vol="shadow-$(echo "$dir" | tr '/' '-')-${TASK_ID}"
+  if [ "$FIRST_SHADOW" = "1" ] && [ -n "${DEP_CACHE_VOLUME:-}" ]; then
+    vol="${DEP_CACHE_VOLUME}"
+  else
+    vol="shadow-$(echo "$dir" | tr '/' '-')-${TASK_ID}"
+  fi
+  FIRST_SHADOW=0
   podman volume exists "$vol" 2>/dev/null || podman volume create "$vol" >/dev/null
   SHADOW_MOUNTS="$SHADOW_MOUNTS --mount type=volume,src=$vol,dst=/workspace/$dir"
 done

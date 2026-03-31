@@ -5,28 +5,63 @@ Run a coding task inside a sandboxed container.
 ## Signature
 
 ```ts
-function runTask(config: RunConfig, options?: RunOptions): Promise<RunResult>
+function runTask(config: RunConfig, options?: RunOptions): Promise<TaskHandle>
 ```
 
 ```ts
 interface RunOptions {
   onProgress?: (message: string) => void;
   onEvent?: (event: ParsedLogEntry) => void;
+  onComplete?: (result: RunResult) => void;  // fired when container exits
+  onError?: (error: Error) => void;          // fired for infrastructure failures (spawn, volume setup)
+}
+
+interface TaskHandle {
+  taskId: string;
+  logPath: string;
+  shadowVolumes: string[];   // dep cache volumes — available immediately after spawn
+  wait(): Promise<RunResult>;
+  stop(): Promise<void>;
 }
 ```
+
+`runTask` returns a `TaskHandle` **immediately after the container spawns** — the container may still be running. Use `handle.wait()` to block until completion (same as the old behaviour), or pass `onComplete` to be notified asynchronously.
+
+`onError` fires only for infrastructure failures before/during spawn (can't create volume, sandbox won't start). `handle.wait()` always resolves — it never rejects. Task-level failures (max turns, agent abort, non-zero exit) come through `onComplete`/`wait()` with the appropriate `status` and `failure_reason`.
 
 ## Minimal example
 
 ```ts
 import { runTask } from "@ysa-ai/ysa/runtime";
 
-const result = await runTask({
+const handle = await runTask({
   taskId: crypto.randomUUID(),
   prompt: "refactor the database connection pool",
   branch: "refactor/db-pool",
   projectRoot: "/home/user/myapp",
   worktreePrefix: "/home/user/myapp/.ysa/worktrees/",
 });
+
+const result = await handle.wait();
+```
+
+## Non-blocking example
+
+```ts
+const handle = await runTask(config, {
+  onComplete: (result) => {
+    console.log("done:", result.status);
+  },
+  onError: (err) => {
+    console.error("spawn failed:", err.message);
+  },
+});
+
+// handle.shadowVolumes available here — before container finishes
+console.log("volumes:", handle.shadowVolumes);
+
+// Stop from a signal handler or timeout
+process.once("SIGINT", () => handle.stop());
 ```
 
 ## RunConfig fields
@@ -48,6 +83,8 @@ const result = await runTask({
 | `networkPolicy` | `"none"\|"strict"` | `"none"` | Container network policy. See [Network guide](/guides/network) |
 | `promptUrl` | `string` | — | URL the container fetches the prompt from (used by the platform) |
 | `shadowDirs` | `string[]` | `["node_modules"]` | Directories shadowed with per-task volumes |
+| `depInstallCmd` | `string` | — | Command to install dependencies before starting the agent (e.g. `"bun install"`). Runs in an isolated container and installs into the shadow volume, so dependencies are available when the agent starts |
+| `depsCacheKey` | `string` | — | Stable cache key for the deps shadow volume. When set, the volume is named `shadow-<dir>-<depsCacheKey>` and reused across tasks with the same key — skipping reinstall if the volume already exists. Pass a hash of your lockfiles to invalidate the cache when deps change |
 | `miseVolume` | `string` | — | Pre-populated mise-installs volume to mount |
 | `worktreeFiles` | `string[]` | — | Untracked files to copy from project root into the worktree |
 | `extraEnv` | `Record<string, string>` | — | Extra environment variables injected into the container |

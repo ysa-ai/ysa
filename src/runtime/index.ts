@@ -1,4 +1,5 @@
 export { runTask } from "./runner";
+export type { RunOptions } from "./runner";
 export { runInteractive } from "./interactive";
 export { getAuthEnv } from "./auth";
 export { createWorktree, removeWorktree, prepareWorktree } from "./worktree";

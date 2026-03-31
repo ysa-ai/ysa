@@ -80,7 +80,7 @@ export async function refineCommand(
     return;
   }
 
-  const result = await runTask(config, {
+  const handle = await runTask(config, {
     onProgress: (msg) => {
       if (!opts.quiet) console.log(`  \x1b[90m${msg}\x1b[0m`);
     },
@@ -88,6 +88,8 @@ export async function refineCommand(
       if (!opts.quiet) renderEvent(entry, !!opts.verbose);
     },
   });
+  process.once("SIGINT", () => { handle.stop().catch(() => {}); });
+  const result = await handle.wait();
 
   console.log();
   if (result.status === "completed") {

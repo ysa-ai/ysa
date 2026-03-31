@@ -33,6 +33,8 @@ export interface RunConfig {
   networkPolicy?: "none" | "strict" | "custom"; // default "none"
   promptUrl?: string; // URL for container to fetch prompt from
   shadowDirs?: string[]; // dirs to shadow with per-task volumes (default: ["node_modules"])
+  depInstallCmd?: string; // command to install dependencies before starting the agent (e.g. "bun install")
+  depsCacheKey?: string; // stable key for the deps shadow volume — same key reuses the volume and skips reinstall
   miseVolume?: string;  // pre-populated mise-installs volume to mount (set at project settings save time)
   worktreeFiles?: string[]; // untracked files to copy from project root into worktree
   extraEnv?: Record<string, string>; // extra env vars injected into the container (e.g. DASHBOARD_URL, ISSUE_ID)
@@ -40,6 +42,15 @@ export interface RunConfig {
   proxyRules?: import("./runtime/proxy").ScopedAllowRule[]; // per-task scoped proxy allow rules
   serverPort?: number; // host server port to bypass in proxy (e.g. dashboard port)
   allowCommit?: boolean; // whether the agent can commit to git (default: true)
+}
+
+// Handle returned immediately by runTask() — container may still be running
+export interface TaskHandle {
+  taskId: string;
+  logPath: string;
+  shadowVolumes: string[];   // dep cache volumes (stable across tasks with same depsCacheKey)
+  wait(): Promise<RunResult>;
+  stop(): Promise<void>;
 }
 
 // What runTask() returns
