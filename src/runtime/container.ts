@@ -302,6 +302,7 @@ export interface SpawnSandboxOpts {
   extraPodEnv?: string;       // opaque "-e KEY=val -e KEY2=val2" string forwarded verbatim to podman run
   extraLabels?: Record<string, string>; // extra podman labels added to the container (caller-defined, for filtering)
   shadowDirs?: string[];      // forwarded as SHADOW_DIRS env var to sandbox-run.sh
+  depCacheVolume?: string;    // pre-populated dep cache volume to use for the first shadow dir
   miseVolume?: string;        // name of the pre-populated mise-installs volume to mount
   sessionVolume?: string;     // override session volume name (for resume/refine across containers)
   interactive?: boolean;      // attach stdin/tty for direct terminal use
@@ -317,6 +318,7 @@ export async function spawnSandbox(opts: SpawnSandboxOpts) {
   if (opts.agentImage) env.AGENT_IMAGE = opts.agentImage;
   if (opts.extraPodEnv) env.EXTRA_POD_ENV = opts.extraPodEnv;
   if (opts.shadowDirs && opts.shadowDirs.length > 0) env.SHADOW_DIRS = opts.shadowDirs.join(" ");
+  if (opts.depCacheVolume) env.DEP_CACHE_VOLUME = opts.depCacheVolume;
   if (opts.miseVolume) env.MISE_VOLUME = opts.miseVolume;
   if (opts.sessionVolume) env.SESSION_VOLUME = opts.sessionVolume;
   if (opts.interactive) env.INTERACTIVE = "1";

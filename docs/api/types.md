@@ -49,6 +49,8 @@ interface RunConfig {
   networkPolicy?: "none" | "strict";
   promptUrl?: string;
   shadowDirs?: string[];
+  depInstallCmd?: string;
+  depsCacheKey?: string;
   miseVolume?: string;
   worktreeFiles?: string[];
   extraEnv?: Record<string, string>;
@@ -59,9 +61,34 @@ interface RunConfig {
 }
 ```
 
+## TaskHandle
+
+Returned immediately by `runTask()` — container may still be running:
+
+```ts
+interface TaskHandle {
+  taskId: string;
+  logPath: string;
+  shadowVolumes: string[];   // dep cache volumes (stable across tasks with same depsCacheKey)
+  wait(): Promise<RunResult>;
+  stop(): Promise<void>;
+}
+```
+
+## RunOptions
+
+```ts
+interface RunOptions {
+  onProgress?: (message: string) => void;
+  onEvent?: (event: ParsedLogEntry) => void;
+  onComplete?: (result: RunResult) => void;
+  onError?: (error: Error) => void;
+}
+```
+
 ## RunResult
 
-What `runTask()` returns:
+What `handle.wait()` / `onComplete` delivers:
 
 ```ts
 interface RunResult {

@@ -86,7 +86,7 @@ export async function runCommand(
   };
 
   const runWithStreaming = async (runConfig: RunConfig) => {
-    return runTask(runConfig, {
+    const handle = await runTask(runConfig, {
       onProgress: (msg) => {
         if (!opts.quiet) console.log(`  \x1b[90m${msg}\x1b[0m`);
       },
@@ -94,6 +94,8 @@ export async function runCommand(
         if (!opts.quiet) renderEvent(entry, !!opts.verbose);
       },
     });
+    process.once("SIGINT", () => { handle.stop().catch(() => {}); });
+    return handle.wait();
   };
 
   const result = await runWithStreaming(config);

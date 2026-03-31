@@ -53,6 +53,7 @@ export default defineConfig({
           { text: "Network Policies", link: "/guides/network" },
           { text: "Review Tasks", link: "/guides/review-tasks" },
           { text: "Providers", link: "/guides/providers" },
+          { text: "Dependency Cache", link: "/guides/dep-cache" },
           { text: "Symphony Integration", link: "/guides/symphony" },
           { text: "ysa vs OpenShell", link: "/guides/openshell" },
         ],

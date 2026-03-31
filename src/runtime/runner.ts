@@ -2,21 +2,27 @@ import { readFile, stat, mkdir, appendFile } from "fs/promises";
 import { join, basename } from "path";
 import { getProvider } from "../providers";
 import { createWorktree, removeWorktree, prepareWorktree } from "./worktree";
-import { spawnSandbox, buildProjectImage, projectImageName, getImagePackagesHash } from "./container";
+import { spawnSandbox, stopContainer, buildProjectImage, projectImageName, getImagePackagesHash, installDepsInShadow } from "./container";
 import { ensureProxy } from "./proxy";
 import { ensureMiseRuntimes } from "./mise";
 import { getOrCreateAuthToken } from "./prompt-token";
 import { readYsaConfig } from "../cli/ysa-config";
-import type { RunConfig, RunResult, TaskStatus } from "../types";
+import type { RunConfig, RunResult, TaskStatus, TaskHandle } from "../types";
 import type { ParsedLogEntry } from "../providers/types";
 
 export interface RunOptions {
   onProgress?: (message: string) => void;
   onEvent?: (event: ParsedLogEntry) => void;
+  onComplete?: (result: RunResult) => void;
+  onError?: (error: Error) => void;
 }
 
 function progressEntry(message: string): string {
   return JSON.stringify({ type: "system", subtype: "progress", message }) + "\n";
+}
+
+function stoppableEntry(value: boolean): string {
+  return JSON.stringify({ type: "system", subtype: "stoppable", value }) + "\n";
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -26,6 +32,12 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function computeShadowVolumeNames(config: RunConfig): string[] {
+  if (!config.depsCacheKey || !config.depInstallCmd) return [];
+  const shadowDir = (config.shadowDirs ?? ["node_modules"])[0] ?? "node_modules";
+  return [`shadow-${shadowDir.replace(/\//g, "-")}-${config.depsCacheKey}`];
 }
 
 // Tail a log file, yielding complete lines as they appear.
@@ -76,41 +88,73 @@ async function* tailLog(
   }
 }
 
-export async function runTask(config: RunConfig, opts?: RunOptions): Promise<RunResult> {
+export async function runTask(config: RunConfig, opts?: RunOptions): Promise<TaskHandle> {
   const taskId = config.taskId;
   const worktree = config.resumeWorktree ?? `${config.worktreePrefix}${taskId}`;
   const branch = config.branch ?? `task/${taskId.slice(0, 8)}`;
   const gitDir = join(config.projectRoot, ".git");
   const logDir = join(config.projectRoot, ".ysa", "logs");
   const logPath = join(logDir, `${taskId}.log`);
+  const startTime = Date.now();
 
   const emitProgress = (msg: string) => {
     opts?.onProgress?.(msg);
   };
 
+  // Eagerly compute shadow volume names — available on handle before container exits
+  const shadowVolumes = computeShadowVolumeNames(config);
+
+  // Promise/resolve pair — resultPromise never rejects
+  let resolveResult!: (r: RunResult) => void;
+  const resultPromise = new Promise<RunResult>(r => { resolveResult = r; });
+
+  const completeWith = (result: RunResult) => {
+    resolveResult(result);
+    queueMicrotask(() => opts?.onComplete?.(result));
+  };
+
+  const failWith = (error: Error) => {
+    const result: RunResult = {
+      task_id: taskId,
+      status: "failed",
+      session_id: null,
+      error: error.message,
+      failure_reason: "infrastructure",
+      log_path: logPath,
+      duration_ms: Date.now() - startTime,
+    };
+    resolveResult(result);
+    queueMicrotask(() => opts?.onError?.(error));
+  };
+
+  let intentionallyStopped = false;
+
+  const handle: TaskHandle = {
+    taskId,
+    logPath,
+    shadowVolumes,
+    wait: () => resultPromise,
+    stop: async () => {
+      intentionallyStopped = true;
+      await stopContainer(taskId, { logPath, labels: config.extraLabels });
+    },
+  };
+
   await mkdir(logDir, { recursive: true });
   await mkdir(config.worktreePrefix, { recursive: true });
 
-  // 1. Create worktree (skip if resuming - worktree already exists)
+  // 1. Create worktree (skip if resuming)
   if (!config.resumeSessionId && !config.resumeWorktree) {
     await appendFile(logPath, progressEntry("Creating git worktree..."));
     emitProgress("Creating git worktree...");
-    // Remove stale worktree from a previous failed/stopped run before recreating
     await removeWorktree(config.projectRoot, worktree, branch).catch(() => {});
     const wt = await createWorktree(config.projectRoot, worktree, branch);
     if (!wt.ok) {
-      return {
-        task_id: taskId,
-        status: "failed",
-        session_id: null,
-        error: `Worktree failed: ${wt.error}`,
-        failure_reason: "infrastructure",
-        log_path: logPath,
-        duration_ms: 0,
-      };
+      failWith(new Error(`Worktree failed: ${wt.error}`));
+      return handle;
     }
 
-    // 2. Prepare worktree (copy .mcp.json, env files, worktree files)
+    // 2. Prepare worktree
     await prepareWorktree(worktree, config.projectRoot, undefined, undefined, config.worktreeFiles);
   }
 
@@ -118,7 +162,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Run
   const adapter = getProvider(config.provider ?? "claude");
   const authEnv = await adapter.getAuthEnv();
 
-  // 4. Build auth env flags string for sandbox (passed as AGENT_AUTH_ENV_FLAGS)
+  // 4. Build auth env flags string
   const agentAuthEnvFlags = adapter.authEnvKeys
     .filter((key) => authEnv[key])
     .map((key) => `-e ${key}`)
@@ -151,27 +195,20 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Run
       emitProgress("Building project sandbox image...");
       const built = await buildProjectImage(aptPackages, projImage, adapter.containerImage, adapter.packageManager, (line) => emitProgress(line));
       if (!built.ok) {
-        return {
-          task_id: taskId,
-          status: "failed",
-          session_id: null,
-          error: `Image build failed: ${built.error}`,
-          failure_reason: "infrastructure",
-          log_path: logPath,
-          duration_ms: 0,
-        };
+        failWith(new Error(`Image build failed: ${built.error}`));
+        return handle;
       }
     }
     agentImage = projImage;
   }
 
-  // 8. Proxy auto-start (issue #40)
+  // 8. Proxy auto-start
   if (config.networkPolicy === "strict") {
     emitProgress("Starting network proxy...");
     await ensureProxy(config.proxyRules, undefined, config.serverPort);
   }
 
-  // 9. Mise pre-install (issue #39) — use .ysa.toml runtimes, fall back to file detection
+  // 9. Mise pre-install
   const miseVolume =
     config.miseVolume ??
     (await ensureMiseRuntimes(
@@ -181,43 +218,86 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Run
       ysaConfig.sandbox?.runtimes,
     ));
 
-  // 10. Spawn sandbox
-  const startTime = Date.now();
+  // 10. Install dependencies into shadow volume (if depInstallCmd is set)
+  let depCacheVolume: string | undefined;
+  if (config.depInstallCmd) {
+    const shadowDir = (config.shadowDirs ?? ["node_modules"])[0] ?? "node_modules";
+    const shadowVolume = config.depsCacheKey
+      ? `shadow-${shadowDir.replace(/\//g, "-")}-${config.depsCacheKey}`
+      : `shadow-${shadowDir.replace(/\//g, "-")}-${taskId}`;
+
+    const volumeExists = config.depsCacheKey
+      ? (await Bun.spawn(["podman", "volume", "exists", shadowVolume]).exited) === 0
+      : false;
+
+    if (volumeExists) {
+      await appendFile(logPath, progressEntry("Dependencies loaded from cache"));
+      emitProgress("Dependencies loaded from cache");
+    } else {
+      await appendFile(logPath, stoppableEntry(false));
+      await appendFile(logPath, progressEntry("Installing dependencies..."));
+      emitProgress("Installing dependencies...");
+      const installResult = await installDepsInShadow({
+        worktree,
+        installCmd: config.depInstallCmd,
+        shadowVolume,
+        shadowDir,
+        image: agentImage,
+        miseVolume,
+      });
+      if (!installResult.ok) {
+        failWith(new Error(`Dependency install failed: ${installResult.error}`));
+        return handle;
+      }
+      await appendFile(logPath, stoppableEntry(true));
+    }
+
+    // Pass the pre-populated volume to sandbox-run.sh so it uses it instead of creating a fresh one
+    if (config.depsCacheKey) depCacheVolume = shadowVolume;
+  }
+
+  // 11. Spawn sandbox
   const env: Record<string, string> = { ...authEnv, ...containerConfig.envVars, ...config.extraEnv };
   if (config.promptUrl) env.PROMPT_URL = config.promptUrl;
   env.PROMPT_TOKEN = getOrCreateAuthToken();
 
-  // When resuming, reuse the original task's session volume so Claude can find the conversation
   const sessionVolume = config.resumeWorktree
     ? `task-session-${basename(config.resumeWorktree)}`
     : undefined;
 
   emitProgress("Starting agent...");
-  const proc = await spawnSandbox({
-    worktree,
-    gitDir,
-    branch,
-    mode: config.allowCommit === false ? "readonly" : "readwrite",
-    id: taskId,
-    cliArgs,
-    env,
-    logPath,
-    networkPolicy: config.networkPolicy,
-    agentBinary: adapter.agentBinary,
-    agentImage,
-    agentInitScript: containerConfig.initScript,
-    agentAuthEnvFlags,
-    extraPodEnv: [
-      `-e CONTEXT_ID=${taskId}`,
-      ...Object.entries(config.extraEnv ?? {}).map(([k, v]) => `-e ${k}=${v}`),
-    ].join(" "),
-    extraLabels: config.extraLabels,
-    shadowDirs: config.shadowDirs,
-    miseVolume,
-    sessionVolume,
-  });
+  let proc: Awaited<ReturnType<typeof spawnSandbox>>;
+  try {
+    proc = await spawnSandbox({
+      worktree,
+      gitDir,
+      branch,
+      mode: config.allowCommit === false ? "readonly" : "readwrite",
+      id: taskId,
+      cliArgs,
+      env,
+      logPath,
+      networkPolicy: config.networkPolicy,
+      agentBinary: adapter.agentBinary,
+      agentImage,
+      agentInitScript: containerConfig.initScript,
+      agentAuthEnvFlags,
+      extraPodEnv: [
+        `-e CONTEXT_ID=${taskId}`,
+        ...Object.entries(config.extraEnv ?? {}).map(([k, v]) => `-e ${k}=${v}`),
+      ].join(" "),
+      extraLabels: config.extraLabels,
+      shadowDirs: config.shadowDirs,
+      depCacheVolume,
+      miseVolume,
+      sessionVolume,
+    });
+  } catch (err) {
+    failWith(err instanceof Error ? err : new Error(String(err)));
+    return handle;
+  }
 
-  // 11. Stream log output in real time (issue #41)
+  // 12. Stream log output in real time
   const exitedPromise = proc.exited;
   if (opts?.onEvent || opts?.onProgress) {
     (async () => {
@@ -230,46 +310,63 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Run
     })();
   }
 
-  const exitCode = await exitedPromise;
-  const durationMs = Date.now() - startTime;
+  // Background: wait for container exit, parse result, fire onComplete
+  (async () => {
+    try {
+      const exitCode = await exitedPromise;
+      const durationMs = Date.now() - startTime;
 
-  // 12. Parse output
-  const parsed = await fileExists(logPath)
-    ? adapter.parseOutput(await readFile(logPath, "utf-8"))
-    : { sessionId: null, maxTurnsReached: false, agentAborted: false, abortReason: null, lastError: null };
+      const parsed = await fileExists(logPath)
+        ? adapter.parseOutput(await readFile(logPath, "utf-8"))
+        : { sessionId: null, maxTurnsReached: false, agentAborted: false, abortReason: null, lastError: null };
 
-  // 13. Determine result
-  let status: TaskStatus;
-  let error: string | null = null;
-  let failureReason: "max_turns" | "infrastructure" | "agent_aborted" | null = null;
+      if (intentionallyStopped) {
+        completeWith({
+          task_id: taskId,
+          status: "stopped",
+          session_id: parsed.sessionId,
+          error: null,
+          failure_reason: null,
+          log_path: logPath,
+          duration_ms: durationMs,
+        });
+        return;
+      }
 
-  if (parsed.agentAborted) {
-    status = "failed";
-    error = parsed.abortReason || "Agent aborted the task";
-    failureReason = "agent_aborted";
-  } else if (parsed.maxTurnsReached) {
-    status = "failed";
-    error = `Max turns (${config.maxTurns ?? 60}) reached.`;
-    failureReason = "max_turns";
-  } else if (exitCode === 0 || (!parsed.lastError && (config.provider ?? "claude") === "claude")) {
-    // exitCode !== 0 with no lastError (Claude only) is a known false positive: Claude writes to
-    // settings.json (mounted :ro for security) at session end and exits with code 1.
-    // Since the work completed without errors, treat it as success.
-    status = "completed";
-  } else {
-    status = "failed";
-    failureReason = "infrastructure";
-    error = `Agent exited with code ${exitCode}`;
-    if (parsed.lastError) error += `. ${parsed.lastError}`;
-  }
+      let status: TaskStatus;
+      let error: string | null = null;
+      let failureReason: "max_turns" | "infrastructure" | "agent_aborted" | null = null;
 
-  return {
-    task_id: taskId,
-    status,
-    session_id: parsed.sessionId,
-    error,
-    failure_reason: failureReason,
-    log_path: logPath,
-    duration_ms: durationMs,
-  };
+      if (parsed.agentAborted) {
+        status = "failed";
+        error = parsed.abortReason || "Agent aborted the task";
+        failureReason = "agent_aborted";
+      } else if (parsed.maxTurnsReached) {
+        status = "failed";
+        error = `Max turns (${config.maxTurns ?? 60}) reached.`;
+        failureReason = "max_turns";
+      } else if (exitCode === 0 || (!parsed.lastError && (config.provider ?? "claude") === "claude")) {
+        status = "completed";
+      } else {
+        status = "failed";
+        failureReason = "infrastructure";
+        error = `Agent exited with code ${exitCode}`;
+        if (parsed.lastError) error += `. ${parsed.lastError}`;
+      }
+
+      completeWith({
+        task_id: taskId,
+        status,
+        session_id: parsed.sessionId,
+        error,
+        failure_reason: failureReason,
+        log_path: logPath,
+        duration_ms: durationMs,
+      });
+    } catch (err) {
+      failWith(err instanceof Error ? err : new Error(String(err)));
+    }
+  })();
+
+  return handle;
 }
