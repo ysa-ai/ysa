@@ -382,3 +382,53 @@ describe("Counter persistence round-trip (ut-2 fix/10)", () => {
     try { unlinkSync(tmpFile); } catch {}
   });
 });
+
+// ── ut-1: Cert cache expiry eviction ────────────────────────────────────────
+
+describe("Cert cache expiry eviction (ut-1)", () => {
+  interface CachedCert { cert: string; key: string; expiresAt: number }
+
+  function makeCertCache() {
+    return new Map<string, CachedCert>();
+  }
+
+  function getCached(cache: Map<string, CachedCert>, hostname: string): CachedCert | null {
+    const entry = cache.get(hostname);
+    if (entry && entry.expiresAt > Date.now()) return entry;
+    return null;
+  }
+
+  function setCached(cache: Map<string, CachedCert>, hostname: string, cert: CachedCert) {
+    cache.set(hostname, cert);
+  }
+
+  it("returns cached cert when not expired", () => {
+    const cache = makeCertCache();
+    const entry: CachedCert = { cert: "cert-pem", key: "key-pem", expiresAt: Date.now() + 60_000 };
+    setCached(cache, "gitlab.com", entry);
+    expect(getCached(cache, "gitlab.com")).toBe(entry);
+  });
+
+  it("returns null for expired cert", () => {
+    const cache = makeCertCache();
+    const entry: CachedCert = { cert: "cert-pem", key: "key-pem", expiresAt: Date.now() - 1 };
+    setCached(cache, "gitlab.com", entry);
+    expect(getCached(cache, "gitlab.com")).toBeNull();
+  });
+
+  it("returns null for missing hostname", () => {
+    const cache = makeCertCache();
+    expect(getCached(cache, "unknown.example.com")).toBeNull();
+  });
+
+  it("expired entry is replaced after regeneration", () => {
+    const cache = makeCertCache();
+    const stale: CachedCert = { cert: "old", key: "old-key", expiresAt: Date.now() - 1 };
+    setCached(cache, "gitlab.com", stale);
+    expect(getCached(cache, "gitlab.com")).toBeNull();
+
+    const fresh: CachedCert = { cert: "new", key: "new-key", expiresAt: Date.now() + 23 * 60 * 60 * 1000 };
+    setCached(cache, "gitlab.com", fresh);
+    expect(getCached(cache, "gitlab.com")).toBe(fresh);
+  });
+});

@@ -354,21 +354,50 @@ function log(action: "ALLOW" | "BLOCK", method: string, target: string, reason: 
 
 // ── Dynamic cert generation ─────────────────────────────────────────────────
 
-const certCache = new Map<string, { cert: string; key: string }>();
+const certCache = new Map<string, { cert: string; key: string; expiresAt: number }>();
 
 function generateCertForHost(hostname: string): Promise<{ cert: string; key: string }> {
   const cached = certCache.get(hostname);
-  if (cached) return Promise.resolve(cached);
+  if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached);
 
   const id = Math.random().toString(36).slice(2, 10);
   const keyFile = `/tmp/cert-${id}.key`;
   const csrFile = `/tmp/cert-${id}.csr`;
   const certFile = `/tmp/cert-${id}.crt`;
+  const cnfFile = `/tmp/cert-${id}.cnf`;
+  const dbFile = `/tmp/cert-${id}.db`;
+  const serialFile = `/tmp/cert-${id}.serial`;
+  const certsDir = `/tmp/cert-${id}.d`;
+
+  // openssl x509 -startdate/-enddate are read-only inspection flags on LibreSSL and OpenSSL <3.5.
+  // openssl ca -startdate/-enddate actually set the validity period.
+  // Format: YYMMDDHHMMSSZ (UTCTime, 2-digit year).
+  const fmt = (d: Date) => d.toISOString().replace(/[-:.TZ]/g, "").slice(2, 14) + "Z";
+  const notBefore = fmt(new Date(Date.now() - 10 * 60 * 1000)); // 10 min backdate for clock skew
+  const notAfter = fmt(new Date(Date.now() + 24 * 60 * 60 * 1000));
+
+  writeFileSync(cnfFile, [
+    "[ca]",
+    "default_ca = CA_default",
+    "[CA_default]",
+    `database = ${dbFile}`,
+    `serial = ${serialFile}`,
+    `new_certs_dir = ${certsDir}`,
+    "default_md = sha256",
+    "policy = policy_anything",
+    "copy_extensions = copy",
+    "[policy_anything]",
+    "commonName = optional",
+    "",
+  ].join("\n"), "utf-8");
 
   const script = [
     `openssl ecparam -genkey -name prime256v1 -noout -out ${keyFile}`,
     `openssl req -new -key ${keyFile} -subj "/CN=${hostname}" -addext "subjectAltName=DNS:${hostname}" -out ${csrFile}`,
-    `openssl x509 -req -in ${csrFile} -CA /opt/proxy/ca.pem -CAkey /opt/proxy/ca-key.pem -CAserial /tmp/ca.srl -CAcreateserial -days 1 -copy_extensions copyall -out ${certFile}`,
+    `touch ${dbFile}`,
+    `printf '01' > ${serialFile}`,
+    `mkdir -p ${certsDir}`,
+    `openssl ca -config ${cnfFile} -in ${csrFile} -cert /opt/proxy/ca.pem -keyfile /opt/proxy/ca-key.pem -startdate ${notBefore} -enddate ${notAfter} -out ${certFile} -batch -notext`,
   ].join(" && ");
 
   return new Promise((resolve, reject) => {
@@ -378,13 +407,13 @@ function generateCertForHost(hostname: string): Promise<{ cert: string; key: str
     proc.on("close", (code) => {
       try {
         if (code !== 0) {
-          spawn("sh", ["-c", `rm -f ${keyFile} ${csrFile} ${certFile}`]);
+          spawn("sh", ["-c", `rm -f ${keyFile} ${csrFile} ${certFile} ${cnfFile} ${dbFile} ${serialFile} && rm -rf ${certsDir}`]);
           return reject(new Error(`cert generation failed (exit ${code}): ${stderr}`));
         }
         const keyPem = readFileSync(keyFile, "utf-8");
         const certPem = readFileSync(certFile, "utf-8");
-        spawn("sh", ["-c", `rm -f ${keyFile} ${csrFile} ${certFile}`]);
-        const result = { cert: certPem, key: keyPem };
+        spawn("sh", ["-c", `rm -f ${keyFile} ${csrFile} ${certFile} ${cnfFile} ${dbFile} ${serialFile} && rm -rf ${certsDir}`]);
+        const result = { cert: certPem, key: keyPem, expiresAt: Date.now() + 23 * 60 * 60 * 1000 };
         certCache.set(hostname, result);
         resolve(result);
       } catch (err) {
