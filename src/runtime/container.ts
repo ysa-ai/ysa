@@ -117,25 +117,26 @@ export async function getImagePackagesHash(image: string): Promise<string | null
   return val || null;
 }
 
-export async function rebuildSandboxImage(
-  apkPackages: string[],
-  image: string = "sandbox-claude",
-  onLog?: (line: string) => void,
-  caDir?: string,
-): Promise<{ ok: boolean; error?: string }> {
-  // Resolve CA cert: reuse persisted cert from caDir if present, otherwise generate fresh
-  if (caDir && await Bun.file(resolve(caDir, "ca.pem")).exists()) {
+export interface RebuildSandboxImageOpts {
+  apkPackages?: string[];
+  image?: string;
+  agent?: "claude" | "mistral";
+  caDir: string;
+  onLog?: (line: string) => void;
+}
+
+export async function rebuildSandboxImage(opts: RebuildSandboxImageOpts): Promise<{ ok: boolean; error?: string }> {
+  const { apkPackages = [], image = "sandbox-claude", agent = "claude", caDir, onLog } = opts;
+
+  if (await Bun.file(resolve(caDir, "ca.pem")).exists()) {
     await runShell(`cp "${caDir}/ca.pem" "${CONTAINER_DIR}/ca.pem" && cp "${caDir}/ca-key.pem" "${CONTAINER_DIR}/ca-key.pem"`);
   } else {
-    const genDir = caDir ?? CONTAINER_DIR;
-    if (caDir) await runShell(`mkdir -p "${genDir}" && chmod 700 "${genDir}"`);
+    await runShell(`mkdir -p "${caDir}" && chmod 700 "${caDir}"`);
     const caScript = resolve(CONTAINER_DIR, "generate-ca.sh");
-    const caGen = await runShell(`bash "${caScript}" "${genDir}"`);
+    const caGen = await runShell(`bash "${caScript}" "${caDir}"`);
     if (!caGen.ok) return { ok: false, error: `CA generation failed: ${caGen.stderr}` };
-    if (caDir) {
-      await runShell(`chmod 644 "${genDir}/ca.pem" && chmod 600 "${genDir}/ca-key.pem"`);
-      await runShell(`cp "${genDir}/ca.pem" "${CONTAINER_DIR}/ca.pem" && cp "${genDir}/ca-key.pem" "${CONTAINER_DIR}/ca-key.pem"`);
-    }
+    await runShell(`chmod 644 "${caDir}/ca.pem" && chmod 600 "${caDir}/ca-key.pem"`);
+    await runShell(`cp "${caDir}/ca.pem" "${CONTAINER_DIR}/ca.pem" && cp "${caDir}/ca-key.pem" "${CONTAINER_DIR}/ca-key.pem"`);
   }
 
   const extraPackages = apkPackages.join(" ");
@@ -144,6 +145,7 @@ export async function rebuildSandboxImage(
     "podman", "build", "-t", image,
     "--label", `ysa.packages=${packagesHash}`,
     "--build-arg", `EXTRA_PACKAGES=${extraPackages}`,
+    "--build-arg", `AGENT=${agent}`,
     "-f", `${CONTAINER_DIR}/Containerfile`,
     `${CONTAINER_DIR}/`,
   ], { stdout: "pipe", stderr: "pipe" });
@@ -159,6 +161,38 @@ export async function rebuildSandboxImage(
 
   const ok = proc.exitCode === 0;
   return { ok, error: ok ? undefined : errLines.join("\n").trim() };
+}
+
+export async function buildProxyImage(caDir: string, onLog?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
+  await runShell(`cp "${caDir}/ca.pem" "${CONTAINER_DIR}/ca.pem" && cp "${caDir}/ca-key.pem" "${CONTAINER_DIR}/ca-key.pem"`);
+
+  const proc = Bun.spawn([
+    "podman", "build", "-t", "sandbox-proxy",
+    "-f", `${CONTAINER_DIR}/Containerfile.proxy`,
+    `${CONTAINER_DIR}/`,
+  ], { stdout: "pipe", stderr: "pipe" });
+
+  const errLines: string[] = [];
+  await Promise.all([
+    streamLines(proc.stdout, (line) => { onLog?.(line); }),
+    streamLines(proc.stderr, (line) => { onLog?.(line); errLines.push(line); }),
+    proc.exited,
+  ]);
+
+  await runShell(`rm -f "${CONTAINER_DIR}/ca.pem" "${CONTAINER_DIR}/ca-key.pem"`);
+
+  const ok = proc.exitCode === 0;
+  return { ok, error: ok ? undefined : errLines.join("\n").trim() };
+}
+
+export async function buildBaseImages(caDir: string, onLog?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
+  for (const agent of ["claude", "mistral"] as const) {
+    onLog?.(`Building sandbox-${agent}...`);
+    const result = await rebuildSandboxImage({ image: `sandbox-${agent}`, agent, caDir, onLog });
+    if (!result.ok) return result;
+  }
+  onLog?.("Building sandbox-proxy...");
+  return buildProxyImage(caDir, onLog);
 }
 
 // Install language runtimes into a named mise-installs volume via a short-lived
