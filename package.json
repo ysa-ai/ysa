@@ -1,6 +1,6 @@
 {
   "name": "@ysa-ai/ysa",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "description": "Run AI coding agents (Claude, Mistral, other providers coming soon) in parallel inside hardened, isolated containers with git worktree separation.",
   "license": "Apache-2.0",
