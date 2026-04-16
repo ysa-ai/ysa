@@ -3,7 +3,7 @@ import { join, basename } from "path";
 import { getProvider } from "../providers";
 import { createWorktree, removeWorktree, prepareWorktree } from "./worktree";
 import { spawnSandbox } from "./container";
-import { getOrCreateAuthToken } from "./prompt-token";
+
 import type { RunConfig } from "../types";
 
 export async function runInteractive(config: RunConfig): Promise<void> {
@@ -42,12 +42,10 @@ export async function runInteractive(config: RunConfig): Promise<void> {
   });
 
   const containerConfig = adapter.initContainerConfig({ model: config.model });
-  const env: Record<string, string> = { ...authEnv, ...containerConfig.envVars };
-  env.PROMPT_TOKEN = getOrCreateAuthToken();
+  const env: Record<string, string> = { ...authEnv, ...containerConfig.envVars, ...config.extraEnv };
 
-  const sessionVolume = config.resumeWorktree
-    ? `task-session-${basename(config.resumeWorktree)}`
-    : undefined;
+  const extraEnvFlags = Object.entries(config.extraEnv ?? {}).map(([k, v]) => `-e ${k}=${v}`).join(" ");
+  const extraPodEnv = [`-e CONTEXT_ID=${taskId}`, extraEnvFlags].filter(Boolean).join(" ");
 
   const proc = await spawnSandbox({
     worktree,
@@ -62,10 +60,9 @@ export async function runInteractive(config: RunConfig): Promise<void> {
     agentImage: adapter.containerImage,
     agentInitScript: containerConfig.initScript,
     agentAuthEnvFlags,
-    extraPodEnv: `-e CONTEXT_ID=${taskId}`,
+    extraPodEnv,
     extraLabels: config.extraLabels,
     shadowDirs: config.shadowDirs,
-    sessionVolume,
     interactive: true,
   });
 
