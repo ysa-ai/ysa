@@ -5,7 +5,7 @@ import { createWorktree, removeWorktree, prepareWorktree } from "./worktree";
 import { spawnSandbox, stopContainer, buildProjectImage, projectImageName, getImagePackagesHash, installDepsInShadow } from "./container";
 import { ensureProxy } from "./proxy";
 import { ensureMiseRuntimes } from "./mise";
-import { getOrCreateAuthToken } from "./prompt-token";
+
 import { readYsaConfig } from "../cli/ysa-config";
 import type { RunConfig, RunResult, TaskStatus, TaskHandle } from "../types";
 import type { ParsedLogEntry } from "../providers/types";
@@ -259,11 +259,6 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   // 11. Spawn sandbox
   const env: Record<string, string> = { ...authEnv, ...containerConfig.envVars, ...config.extraEnv };
   if (config.promptUrl) env.PROMPT_URL = config.promptUrl;
-  env.PROMPT_TOKEN = getOrCreateAuthToken();
-
-  const sessionVolume = config.resumeWorktree
-    ? `task-session-${basename(config.resumeWorktree)}`
-    : undefined;
 
   emitProgress("Starting agent...");
   let proc: Awaited<ReturnType<typeof spawnSandbox>>;
@@ -290,7 +285,6 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
       shadowDirs: config.shadowDirs,
       depCacheVolume,
       miseVolume,
-      sessionVolume,
     });
   } catch (err) {
     failWith(err instanceof Error ? err : new Error(String(err)));
