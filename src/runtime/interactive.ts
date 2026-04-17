@@ -9,8 +9,7 @@ import type { RunConfig } from "../types";
 export async function runInteractive(config: RunConfig): Promise<void> {
   const taskId = config.taskId;
   const worktree = config.resumeWorktree ?? `${config.worktreePrefix}${taskId}`;
-  const branch = `task/${taskId.slice(0, 8)}`;
-  const baseBranch = config.branch;
+  const branch = config.branch;
   const gitDir = join(config.projectRoot, ".git");
   const logDir = join(config.projectRoot, ".ysa", "logs");
 
@@ -19,7 +18,7 @@ export async function runInteractive(config: RunConfig): Promise<void> {
 
   if (!config.resumeSessionId && !config.resumeWorktree) {
     await removeWorktree(config.projectRoot, worktree, branch).catch(() => {});
-    const wt = await createWorktree(config.projectRoot, worktree, branch, baseBranch);
+    const wt = await createWorktree(config.projectRoot, worktree, branch);
     if (!wt.ok) {
       console.error(`Worktree failed: ${wt.error}`);
       process.exit(1);

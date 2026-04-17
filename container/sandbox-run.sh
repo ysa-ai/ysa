@@ -36,11 +36,11 @@ ALLOWED_BRANCH="$3"
 MODE="$4"
 TASK_ID="$5"
 shift 5
-# Extract --allowedTools value (used to write MCP permissions into container settings)
+# Extract --tools value (used to write MCP permissions into container settings)
 ALLOWED_TOOLS_VALUE=""
 PREV_ARG=""
 for arg in "$@"; do
-  if [ "$PREV_ARG" = "--allowedTools" ]; then
+  if [ "$PREV_ARG" = "--tools" ]; then
     ALLOWED_TOOLS_VALUE="$arg"
     break
   fi
@@ -236,7 +236,7 @@ fi
 # -- Generate read-only settings.json on host --------------------------------
 # settings.json is mounted :ro so the agent cannot modify the hook reference.
 # Claude Code does not write to settings.json during normal operation (confirmed).
-# ALLOWED_TOOLS injection is best-effort: if jq is unavailable, the --allowedTools
+# ALLOWED_TOOLS injection is best-effort: if jq is unavailable, the --tools
 # CLI flag already enforces restrictions and the injection is redundant.
 SETTINGS_TMP=$(mktemp)
 if [ -n "$ALLOWED_TOOLS_VALUE" ] && command -v jq >/dev/null 2>&1; then
