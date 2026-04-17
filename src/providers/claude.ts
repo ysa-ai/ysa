@@ -417,7 +417,13 @@ function buildClaudeCommand(opts: CommandOpts): string[] {
   }
 
   if (opts.allowedTools) {
-    args.push("--allowedTools", opts.allowedTools);
+    const tools = opts.allowedTools.split(",").filter((t) => t !== "mcp__*").join(",");
+    if (tools) args.push("--tools", tools);
+    if (!opts.allowedTools.includes("mcp__")) {
+      args.push("--strict-mcp-config");
+    }
+  } else {
+    args.push("--strict-mcp-config");
   }
 
   if (opts.model) {
