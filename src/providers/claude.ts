@@ -117,6 +117,9 @@ async function refreshOAuthToken(refreshToken: string, clientId: string): Promis
     if (parsed?.error === "invalid_grant") {
       throw new Error("invalid_grant");
     }
+    if (parsed?.error?.type === "invalid_request_error") {
+      throw new Error("oauth_client_stale");
+    }
     throw new Error(`OAuth refresh failed (${res.status}): ${body}`);
   }
 
@@ -175,6 +178,11 @@ async function getOAuthToken(): Promise<string> {
           cachedTokenExpiresAt = 0;
           throw new Error("Claude session expired. Run 'claude /login' to re-authenticate.");
         }
+      } else if (err.message === "oauth_client_stale") {
+        cachedClientId = null;
+        cachedOAuthToken = null;
+        cachedTokenExpiresAt = 0;
+        throw new Error("Claude OAuth client not recognized — update Claude CLI and run 'claude /login' to re-authenticate.");
       } else {
         throw err;
       }
