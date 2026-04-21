@@ -33,8 +33,9 @@ async function extractClientIdFromBinary(): Promise<string | null> {
     const binPath = (await new Response(readlink.stdout).text()).trim();
     if ((await readlink.exited) !== 0 || !binPath) return null;
 
+    // Extract the production client ID (OAUTH_FILE_SUFFIX:"") — not the local dev one
     const extract = Bun.spawn(
-      ["bash", "-c", `grep -oaE 'CLIENT_ID:"[0-9a-f-]+"' "${binPath}" 2>/dev/null | head -1 | sed 's/CLIENT_ID:"//;s/"//'`],
+      ["bash", "-c", `grep -oaE 'CLIENT_ID:"[0-9a-f-]+",OAUTH_FILE_SUFFIX:""' "${binPath}" 2>/dev/null | head -1 | grep -oE '"[0-9a-f-]+"' | head -1 | tr -d '"'`],
       { stdout: "pipe", stderr: "pipe" },
     );
     const clientId = (await new Response(extract.stdout).text()).trim();
