@@ -1,6 +1,6 @@
 {
   "name": "@ysa-ai/ysa",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "type": "module",
   "description": "Run AI coding agents (Claude, Mistral, other providers coming soon) in parallel inside hardened, isolated containers with git worktree separation.",
   "license": "Apache-2.0",
@@ -32,8 +32,14 @@
     "ysa": "src/cli/index.ts"
   },
   "exports": {
-    ".": { "types": "./src/index.ts", "default": "./out/index.js" },
-    "./runtime": { "types": "./src/runtime/index.ts", "default": "./out/runtime.js" },
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./out/index.js"
+    },
+    "./runtime": {
+      "types": "./src/runtime/index.ts",
+      "default": "./out/runtime.js"
+    },
     "./types": "./src/types.ts"
   },
   "scripts": {
