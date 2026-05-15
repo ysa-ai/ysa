@@ -42,6 +42,9 @@ export interface RunConfig {
   proxyRules?: import("./runtime/proxy").ScopedAllowRule[]; // per-task scoped proxy allow rules
   serverPort?: number; // host server port to bypass in proxy (e.g. dashboard port)
   allowCommit?: boolean; // whether the agent can commit to git (default: true)
+  containerMemory?: string; // e.g. "8g"
+  containerCpus?: number;
+  containerPidsLimit?: number;
 }
 
 // Handle returned immediately by runTask() — container may still be running

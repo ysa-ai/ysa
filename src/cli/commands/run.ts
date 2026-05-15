@@ -52,12 +52,14 @@ export async function runCommand(
     verbose?: boolean;
     interactive?: boolean;
     allowCommit?: boolean;
+    provider?: string;
   },
 ) {
   const projectRoot = await resolveProjectRoot(opts.project);
   const taskId = crypto.randomUUID();
   const worktreePrefix = join(projectRoot, ".ysa", "worktrees/");
   const worktreePath = `${worktreePrefix}${taskId}`;
+  const provider = opts.provider ?? "claude";
 
   if (opts.interactive) {
     await runInteractive({
@@ -66,7 +68,7 @@ export async function runCommand(
       branch: opts.branch,
       projectRoot,
       worktreePrefix,
-      provider: "claude",
+      provider,
       networkPolicy: opts.network as "none" | "strict" | "custom",
     });
     return;
@@ -78,7 +80,7 @@ export async function runCommand(
     branch: opts.branch,
     projectRoot,
     worktreePrefix,
-    provider: "claude",
+    provider,
     maxTurns: parseInt(opts.maxTurns),
     allowedTools: opts.tools?.split(","),
     networkPolicy: opts.network as "none" | "strict" | "custom",
@@ -137,7 +139,7 @@ export async function runCommand(
         branch: opts.branch,
         projectRoot,
         worktreePrefix,
-        provider: "claude",
+        provider,
         maxTurns: parseInt(opts.maxTurns),
         networkPolicy: opts.network as "none" | "strict" | "custom",
         resumeSessionId: currentSessionId,

@@ -33,6 +33,12 @@ COPY vibe-config.toml /etc/vibe-defaults/config.toml
 RUN userdel bun 2>/dev/null || true && \
     groupadd -g 1001 agent && useradd -u 1000 -g agent -m -d /home/agent -s /bin/bash agent
 
+# Remove passwd entries (except root) whose home dir is '/' — prevents getpwuid_r
+# from returning '/' as home for any UID that maps into the container at runtime,
+# which would cause tools to compute read-only paths like /.turbo/cache.
+# When no entry is found, all tools fall back to the HOME env var instead.
+RUN awk -F: 'BEGIN{OFS=":"} !($1!="root" && $6=="/")' /etc/passwd > /tmp/passwd.tmp && mv /tmp/passwd.tmp /etc/passwd
+
 # Workspace (rw — Claude edits code here) and output dirs
 RUN mkdir -p /workspace /output && chown agent:agent /workspace /output
 

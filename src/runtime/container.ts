@@ -39,6 +39,10 @@ export function setContainerDir(dir: string): void {
   CONTAINER_DIR = dir;
 }
 
+export function getContainerDir(): string {
+  return CONTAINER_DIR;
+}
+
 export async function getSeccompProfile(): Promise<string> {
   return resolve(_containerDir, "seccomp.json");
 }
@@ -98,6 +102,9 @@ export async function buildProjectImage(
       ? `apt-get update && apt-get install -y --no-install-recommends ${packages.join(" ")} && rm -rf /var/lib/apt/lists/*`
       : `apk add --no-cache ${packages.join(" ")}`;
     lines.push(`RUN ${installCmd}`);
+    if (packageManager === "apt") {
+      lines.push(`RUN awk -F: 'BEGIN{OFS=":"} !($1!="root" && $6=="/")' /etc/passwd > /tmp/passwd.tmp && mv /tmp/passwd.tmp /etc/passwd`);
+    }
   }
 
   const byManager = new Map<string, string[]>();
@@ -148,6 +155,17 @@ export async function getImagePackagesHash(image: string): Promise<string | null
   return val || null;
 }
 
+export async function getImageCfHash(image: string): Promise<string | null> {
+  const proc = Bun.spawn(
+    ["podman", "image", "inspect", image, "--format", "{{index .Labels \"ysa.cf-hash\"}}"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const stdout = await new Response(proc.stdout).text();
+  await proc.exited;
+  const val = stdout.trim();
+  return val || null;
+}
+
 export interface RebuildSandboxImageOpts {
   apkPackages?: string[];
   image?: string;
@@ -172,9 +190,12 @@ export async function rebuildSandboxImage(opts: RebuildSandboxImageOpts): Promis
 
   const extraPackages = apkPackages.join(" ");
   const packagesHash = Bun.hash([...apkPackages].sort().join(",")).toString(16);
+  const cfContent = await Bun.file(resolve(CONTAINER_DIR, "Containerfile")).text();
+  const cfHash = Bun.hash(cfContent).toString(16);
   const proc = Bun.spawn([
     "podman", "build", "-t", image,
     "--label", `ysa.packages=${packagesHash}`,
+    "--label", `ysa.cf-hash=${cfHash}`,
     "--build-arg", `EXTRA_PACKAGES=${extraPackages}`,
     "--build-arg", `AGENT=${agent}`,
     "-f", `${CONTAINER_DIR}/Containerfile`,
@@ -370,6 +391,9 @@ export interface SpawnSandboxOpts {
   depCacheVolume?: string;    // pre-populated dep cache volume to use for the first shadow dir
   miseVolume?: string;        // name of the pre-populated mise-installs volume to mount
   interactive?: boolean;      // attach stdin/tty for direct terminal use
+  containerMemory?: string;   // e.g. "8g" — overrides sandbox-run.sh default of 4g
+  containerCpus?: number;     // e.g. 4 — overrides sandbox-run.sh default of 2
+  containerPidsLimit?: number; // e.g. 1024 — overrides sandbox-run.sh default of 512
 }
 
 export async function spawnSandbox(opts: SpawnSandboxOpts) {
@@ -386,6 +410,9 @@ export async function spawnSandbox(opts: SpawnSandboxOpts) {
   if (opts.miseVolume) env.MISE_VOLUME = opts.miseVolume;
   if (opts.interactive) env.INTERACTIVE = "1";
   if (opts.extraLabels) env.EXTRA_LABELS = Object.entries(opts.extraLabels).map(([k, v]) => `${k}=${v}`).join(" ");
+  if (opts.containerMemory) env.CONTAINER_MEMORY = opts.containerMemory;
+  if (opts.containerCpus !== undefined) env.CONTAINER_CPUS = String(opts.containerCpus);
+  if (opts.containerPidsLimit !== undefined) env.CONTAINER_PIDS_LIMIT = String(opts.containerPidsLimit);
 
   return Bun.spawn(
     [

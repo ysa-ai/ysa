@@ -5,7 +5,7 @@
 #
 # Modes: readonly, readwrite
 #
-# Mounts: worktree (/workspace), git dir (/repo.git) -- nothing else.
+# Mounts: worktree (/workspace), git dir (/tmp/repo.git) -- nothing else.
 # Session persistence via podman named volume (task-session-{task_id}).
 # Log capture via stdout pipe on host (tee).
 #
@@ -70,11 +70,11 @@ WORKTREE_NAME="$(basename "$WORKTREE")"
 # -- Mode-based access control ------------------------------------------------
 case "$MODE" in
   readonly)
-    REPO_MOUNT="$REPO_GIT:/repo.git:ro"
+    REPO_MOUNT="$REPO_GIT:/tmp/repo.git:ro"
     SANDBOX_MODE="readonly"
     ;;
   readwrite)
-    REPO_MOUNT="$REPO_GIT:/repo.git:rw"
+    REPO_MOUNT="$REPO_GIT:/tmp/repo.git:rw"
     SANDBOX_MODE="readwrite"
     ;;
   *)
@@ -118,8 +118,15 @@ done
 # -- Git worktree pointer ------------------------------------------------------
 # Write container-internal git pointers from the host before container starts,
 # so the container sees the correct paths without needing write access to them.
-echo "gitdir: /repo.git/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
+echo "gitdir: /tmp/repo.git/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
 echo "/workspace/.git" > "$REPO_GIT/worktrees/$WORKTREE_NAME/gitdir"
+
+# -- Progress helper ----------------------------------------------------------
+progress() {
+  if [ -n "${LOG_FILE:-}" ]; then
+    printf '{"type":"system","subtype":"progress","message":"%s"}\n' "$1" >> "$LOG_FILE"
+  fi
+}
 
 # -- Network policy -----------------------------------------------------------
 NETWORK_POLICY="${NETWORK_POLICY:-none}"
@@ -144,6 +151,8 @@ echo "Worktree: $WORKTREE" >&2
 echo "Network: $NETWORK_POLICY" >&2
 echo "Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
 echo "Timeout: ${TIMEOUT}s" >&2
+echo "Memory: ${CONTAINER_MEMORY:-4g (default)}" >&2
+progress "Container memory limit: ${CONTAINER_MEMORY:-4g (default)}"
 echo "Args:$QUOTED_ARGS" >&2
 echo "=========================" >&2
 
@@ -151,13 +160,6 @@ echo "=========================" >&2
 podman_ver=$(podman version --format '{{.Client.Version}}' 2>/dev/null || echo "unknown")
 runtime_ver=$(podman info --format '{{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Version}}' 2>/dev/null | head -1 || echo "unknown")
 echo "Podman: $podman_ver, Runtime: $runtime_ver" >&2
-
-# -- Progress helper ----------------------------------------------------------
-progress() {
-  if [ -n "${LOG_FILE:-}" ]; then
-    printf '{"type":"system","subtype":"progress","message":"%s"}\n' "$1" >> "$LOG_FILE"
-  fi
-}
 
 # -- Log capture setup ---------------------------------------------------------
 if [ -n "${LOG_FILE:-}" ]; then
@@ -283,9 +285,9 @@ podman run --rm \
   --read-only \
   --tmpfs /tmp:rw,nosuid,size=256m \
   --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \
-  --memory 4g \
-  --pids-limit 512 \
-  --cpus 2 \
+  --memory "${CONTAINER_MEMORY:-4g}" \
+  --pids-limit "${CONTAINER_PIDS_LIMIT:-512}" \
+  --cpus "${CONTAINER_CPUS:-2}" \
   --ulimit core=0 \
   --timeout "$TIMEOUT" \
   -e ALLOWED_BRANCH="$ALLOWED_BRANCH" \

@@ -13,6 +13,7 @@ import { teardownCommand } from "./commands/teardown";
 import { refineCommand } from "./commands/refine";
 import { setupCommand } from "./commands/setup";
 import { runtimeCommand } from "./commands/runtime";
+import { keyCommand } from "./commands/key";
 
 const program = new Command();
 
@@ -34,6 +35,7 @@ program
   .option("-v, --verbose", "Show full log including tool calls")
   .option("-i, --interactive", "Attach stdin/stdout for a live terminal session inside the sandbox")
   .option("--no-commit", "Prevent the agent from committing to git (analysis/review tasks)")
+  .option("--provider <provider>", "LLM provider: claude|deepseek|mistral", "claude")
   .action((prompt: string, opts: Record<string, string | boolean>) => {
     runCommand(prompt, {
       branch: opts.branch as string,
@@ -45,6 +47,7 @@ program
       verbose: opts.verbose as boolean | undefined,
       interactive: opts.interactive === true,
       allowCommit: opts.commit !== false,
+      provider: opts.provider as string | undefined,
     });
   });
 
@@ -116,6 +119,15 @@ program
   .description("First-run setup: preflight checks, image build, CA cert, network hooks")
   .action(() => {
     setupCommand();
+  });
+
+program
+  .command("key")
+  .description("Manage provider API keys")
+  .argument("<action>", "set | delete | check")
+  .argument("<provider>", "Provider name, e.g. deepseek or mistral")
+  .action((action: string, provider: string) => {
+    keyCommand(action, provider);
   });
 
 program.parse();

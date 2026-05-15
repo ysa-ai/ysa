@@ -1,10 +1,12 @@
 import type { ProviderAdapter } from "./types";
 import { claudeAdapter } from "./claude";
 import { mistralAdapter } from "./mistral";
+import { deepseekAdapter } from "./deepseek";
 
 const registry = new Map<string, ProviderAdapter>([
   ["claude", claudeAdapter],
   ["mistral", mistralAdapter],
+  ["deepseek", deepseekAdapter],
 ]);
 
 export function getProvider(id: string): ProviderAdapter {

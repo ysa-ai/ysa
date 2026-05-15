@@ -209,7 +209,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   // 8. Proxy auto-start
   if (config.networkPolicy === "strict") {
     emitProgress("Starting network proxy...");
-    await ensureProxy(config.proxyRules, undefined, config.serverPort);
+    await ensureProxy(config.proxyRules, adapter.bypassHosts, config.serverPort);
   }
 
   // 9. Mise pre-install
@@ -289,6 +289,9 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
       shadowDirs: config.shadowDirs,
       depCacheVolume,
       miseVolume,
+      containerMemory: config.containerMemory,
+      containerCpus: config.containerCpus,
+      containerPidsLimit: config.containerPidsLimit,
     });
   } catch (err) {
     failWith(err instanceof Error ? err : new Error(String(err)));
