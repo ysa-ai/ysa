@@ -305,16 +305,19 @@ podman run --rm \
   -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-agent@sandbox}" \
   -e GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Sandbox Agent}" \
   -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-agent@sandbox}" \
+  -e HOME=/home/agent \
   -e MISE_DATA_DIR=/home/agent/.local/share/mise \
   -v "$WORKTREE:/workspace:rw" \
   $SHADOW_MOUNTS \
   -v "$REPO_MOUNT" \
   --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
-  --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude" \
-  --mount "type=volume,src=${MISE_VOLUME},dst=/home/agent/.local/share/mise/installs" \
+  --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude:ro" \
+  --mount "type=volume,src=${MISE_VOLUME},dst=/home/agent/.local/share/mise/installs:ro" \
   -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
   "$IMAGE" \
   -c "
+    export HOME=/home/agent
+
     # Progress helper (JSON to stdout -> tee -> LOG_FILE)
     _progress() { printf '{\"type\":\"system\",\"subtype\":\"progress\",\"message\":\"%s\"}\\n' \"\$1\"; }
 
@@ -328,9 +331,6 @@ podman run --rm \
     if [ -n \"\${AGENT_INIT_SCRIPT:-}\" ]; then
       eval \"\$AGENT_INIT_SCRIPT\"
     else
-      if [ ! -f /home/agent/.claude/settings.json ] && [ -f /etc/claude-defaults/settings.json ]; then
-        cp /etc/claude-defaults/settings.json /home/agent/.claude/settings.json
-      fi
       if [ -f /home/agent/.claude.json ]; then
         jq '.hasCompletedOnboarding = true | .projects[\\\"/workspace\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && cp /tmp/cj.json /home/agent/.claude.json && rm -f /tmp/cj.json
       else

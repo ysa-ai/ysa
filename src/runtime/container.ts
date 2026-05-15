@@ -71,25 +71,56 @@ export function projectImageName(projectRoot: string, provider: string): string 
 
 // Build a project-specific image by layering packages on top of the provider's base image.
 // Much faster than a full Containerfile build — only adds one layer.
+function globalInstallCmd(manager: string, pkgs: string[]): string {
+  const list = pkgs.join(" ");
+  switch (manager) {
+    case "pip":    return `pip install --no-cache-dir --break-system-packages ${list} && rm -rf /root/.cache/pip`;
+    case "npm":    return `npm install -g ${list} && npm cache clean --force`;
+    case "gem":    return `gem install --no-document ${list}`;
+    case "cargo":  return `cargo install ${list} && rm -rf /root/.cargo/registry`;
+    case "go":     return `go install ${list} && go clean -cache`;
+    default:       return `bun add -g ${list} && rm -rf /usr/local/.bun-cache`;
+  }
+}
+
 export async function buildProjectImage(
   packages: string[],
   targetImage: string,
   fromImage: string,
   packageManager: "apt" | "apk",
+  globalPackages: string[] = [],
   onLog?: (line: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  const installCmd = packageManager === "apt"
-    ? `apt-get update && apt-get install -y --no-install-recommends ${packages.join(" ")} && rm -rf /var/lib/apt/lists/*`
-    : `apk add --no-cache ${packages.join(" ")}`;
+  const lines = [`FROM ${fromImage}`, "USER root"];
 
-  const dockerfile = [
-    `FROM ${fromImage}`,
-    "USER root",
-    `RUN ${installCmd}`,
-    "USER agent",
-  ].join("\n");
+  if (packages.length > 0) {
+    const installCmd = packageManager === "apt"
+      ? `apt-get update && apt-get install -y --no-install-recommends ${packages.join(" ")} && rm -rf /var/lib/apt/lists/*`
+      : `apk add --no-cache ${packages.join(" ")}`;
+    lines.push(`RUN ${installCmd}`);
+  }
 
-  const packagesHash = Bun.hash([...packages].sort().join(",")).toString(16);
+  const byManager = new Map<string, string[]>();
+  for (const entry of globalPackages) {
+    const sep = entry.indexOf(":");
+    if (sep === -1) continue;
+    const manager = entry.slice(0, sep);
+    const pkg = entry.slice(sep + 1);
+    const list = byManager.get(manager) ?? [];
+    list.push(pkg);
+    byManager.set(manager, list);
+  }
+  for (const [manager, pkgs] of byManager) {
+    lines.push(`RUN ${globalInstallCmd(manager, pkgs)}`);
+  }
+
+  lines.push("USER agent");
+  const dockerfile = lines.join("\n");
+
+  const hashInput = globalPackages.length > 0
+    ? [...packages].sort().join(",") + "|" + [...globalPackages].sort().join(",")
+    : [...packages].sort().join(",");
+  const packagesHash = Bun.hash(hashInput).toString(16);
   const proc = Bun.spawn(
     ["podman", "build", "-t", targetImage, "--label", `ysa.packages=${packagesHash}`, "-f", "-", "."],
     { stdin: new TextEncoder().encode(dockerfile), stdout: "pipe", stderr: "pipe" },

@@ -144,7 +144,8 @@ ENV GIT_CONFIG_COUNT=20 \
 
 # Install mise universal toolchain manager
 RUN curl https://mise.run | sh
-ENV PATH="/home/agent/.local/bin:$PATH"
+ENV PATH="/home/agent/.local/bin:$PATH" \
+    HOME="/home/agent"
 RUN mise --version
 
 # Optional language runtime packages — installed via apt based on project language selection.

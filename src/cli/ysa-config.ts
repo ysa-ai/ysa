@@ -4,8 +4,9 @@ import { existsSync } from "fs";
 
 export interface YsaConfig {
   sandbox?: {
-    runtimes?: string[];  // mise tools, e.g. ["node@22", "python@3.12"]
-    packages?: string[];  // apt packages, e.g. ["libpq-dev", "imagemagick"]
+    runtimes?: string[];        // mise tools, e.g. ["node@22", "python@3.12"]
+    packages?: string[];        // apt/apk packages, e.g. ["libpq-dev", "chromium"]
+    global_packages?: string[]; // global installs, e.g. ["bun:@playwright/cli", "pip:playwright"]
   };
 }
 
@@ -33,6 +34,7 @@ function parseToml(content: string): YsaConfig {
     if (!config.sandbox) config.sandbox = {};
     if (key === "runtimes") config.sandbox.runtimes = items;
     if (key === "packages") config.sandbox.packages = items;
+    if (key === "global_packages") config.sandbox.global_packages = items;
   }
 
   return config;
@@ -43,6 +45,7 @@ function serializeToml(config: YsaConfig): string {
   const arr = (items: string[]) => `[${items.map((i) => `"${i}"`).join(", ")}]`;
   if (config.sandbox?.runtimes?.length) lines.push(`runtimes = ${arr(config.sandbox.runtimes)}`);
   if (config.sandbox?.packages?.length) lines.push(`packages = ${arr(config.sandbox.packages)}`);
+  if (config.sandbox?.global_packages?.length) lines.push(`global_packages = ${arr(config.sandbox.global_packages)}`);
   return lines.join("\n") + "\n";
 }
 

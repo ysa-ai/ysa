@@ -185,15 +185,19 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   // 7. Read .ysa.toml and resolve project image
   const ysaConfig = await readYsaConfig(config.projectRoot);
   const aptPackages = ysaConfig.sandbox?.packages ?? [];
+  const globalPackages = ysaConfig.sandbox?.global_packages ?? [];
   let agentImage = adapter.containerImage;
 
-  if (aptPackages.length > 0) {
+  if (aptPackages.length > 0 || globalPackages.length > 0) {
     const projImage = projectImageName(config.projectRoot, adapter.id);
-    const targetHash = Bun.hash([...aptPackages].sort().join(",")).toString(16);
+    const hashInput = globalPackages.length > 0
+      ? [...aptPackages].sort().join(",") + "|" + [...globalPackages].sort().join(",")
+      : [...aptPackages].sort().join(",");
+    const targetHash = Bun.hash(hashInput).toString(16);
     const currentHash = await getImagePackagesHash(projImage);
     if (currentHash !== targetHash) {
       emitProgress("Building project sandbox image...");
-      const built = await buildProjectImage(aptPackages, projImage, adapter.containerImage, adapter.packageManager, (line) => emitProgress(line));
+      const built = await buildProjectImage(aptPackages, projImage, adapter.containerImage, adapter.packageManager, globalPackages, (line) => emitProgress(line));
       if (!built.ok) {
         failWith(new Error(`Image build failed: ${built.error}`));
         return handle;
