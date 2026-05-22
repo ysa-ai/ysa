@@ -7,6 +7,7 @@ export interface YsaConfig {
     runtimes?: string[];        // mise tools, e.g. ["node@22", "python@3.12"]
     packages?: string[];        // apt/apk packages, e.g. ["libpq-dev", "chromium"]
     global_packages?: string[]; // global installs, e.g. ["bun:@playwright/cli", "pip:playwright"]
+    init_commands?: string[];   // commands run inside container before agent starts, e.g. ["redis-server --daemonize yes"]
   };
 }
 
@@ -35,6 +36,7 @@ function parseToml(content: string): YsaConfig {
     if (key === "runtimes") config.sandbox.runtimes = items;
     if (key === "packages") config.sandbox.packages = items;
     if (key === "global_packages") config.sandbox.global_packages = items;
+    if (key === "init_commands") config.sandbox.init_commands = items;
   }
 
   return config;
@@ -46,6 +48,7 @@ function serializeToml(config: YsaConfig): string {
   if (config.sandbox?.runtimes?.length) lines.push(`runtimes = ${arr(config.sandbox.runtimes)}`);
   if (config.sandbox?.packages?.length) lines.push(`packages = ${arr(config.sandbox.packages)}`);
   if (config.sandbox?.global_packages?.length) lines.push(`global_packages = ${arr(config.sandbox.global_packages)}`);
+  if (config.sandbox?.init_commands?.length) lines.push(`init_commands = ${arr(config.sandbox.init_commands)}`);
   return lines.join("\n") + "\n";
 }
 

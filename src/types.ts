@@ -35,11 +35,12 @@ export interface RunConfig {
   shadowDirs?: string[]; // dirs to shadow with per-task volumes (default: ["node_modules"])
   depInstallCmd?: string; // command to install dependencies before starting the agent (e.g. "bun install")
   depsCacheKey?: string; // stable key for the deps shadow volume — same key reuses the volume and skips reinstall
-  miseVolume?: string;  // pre-populated mise-installs volume to mount (set at project settings save time)
+  miseInstallsPath?: string;  // host path to pre-populated mise-installs dir, bind-mounted :ro into task container
   worktreeFiles?: string[]; // untracked files to copy from project root into worktree
   extraEnv?: Record<string, string>; // extra env vars injected into the container (e.g. DASHBOARD_URL, ISSUE_ID)
   extraLabels?: Record<string, string>; // extra podman labels on the container (for filtering by stop/teardown)
   proxyRules?: import("./runtime/proxy").ScopedAllowRule[]; // per-task scoped proxy allow rules
+  bypassHosts?: string[]; // host or host:port — iptables ACCEPT + proxy bypass (skips all filtering)
   serverPort?: number; // host server port to bypass in proxy (e.g. dashboard port)
   allowCommit?: boolean; // whether the agent can commit to git (default: true)
   containerMemory?: string; // e.g. "8g"

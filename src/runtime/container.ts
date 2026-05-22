@@ -1,6 +1,6 @@
 import { readFile, stat } from "fs/promises";
 import { existsSync } from "fs";
-import { resolve } from "path";
+import { resolve, basename } from "path";
 import { getProvider } from "../providers";
 
 async function fileExists(path: string): Promise<boolean> {
@@ -83,7 +83,7 @@ function globalInstallCmd(manager: string, pkgs: string[]): string {
     case "gem":    return `gem install --no-document ${list}`;
     case "cargo":  return `cargo install ${list} && rm -rf /root/.cargo/registry`;
     case "go":     return `go install ${list} && go clean -cache`;
-    default:       return `bun add -g ${list} && rm -rf /usr/local/.bun-cache`;
+    default:       return `bun add -g ${list} && rm -rf /usr/local/.bun-cache /home/agent/.bun /tmp/bun*`;
   }
 }
 
@@ -247,13 +247,13 @@ export async function buildBaseImages(caDir: string, onLog?: (line: string) => v
   return buildProxyImage(caDir, onLog);
 }
 
-// Install language runtimes into a named mise-installs volume via a short-lived
+// Install language runtimes into a host-side bind-mount directory via a short-lived
 // container. Runs WITHOUT --tmpfs /home/agent so the image's mise binary is
 // accessible from the image layer. Writes resolved bin paths to .bin-paths
-// inside the volume so task containers can activate tools without touching mise.
+// inside the dir so task containers can activate tools without touching mise.
 export async function installRuntimes(
   tools: string[],
-  installsVolume: string,
+  installsPath: string,
   image: string = "sandbox-claude",
   extraEnv: Record<string, string> = {},
   runtimeEnv: Record<string, string> = {},
@@ -262,15 +262,15 @@ export async function installRuntimes(
 ): Promise<{ ok: boolean; error?: string }> {
   if (tools.length === 0) return { ok: true };
 
-  const dataVolume = installsVolume.replace(/^mise-installs/, "mise-data");
+  const dataVolume = `mise-data-${basename(installsPath)}`;
 
-  await runShell(`podman volume exists ${installsVolume} 2>/dev/null || podman volume create ${installsVolume}`);
+  await runShell(`mkdir -p "${installsPath}"`);
   await runShell(`podman volume exists ${dataVolume} 2>/dev/null || podman volume create ${dataVolume}`);
 
   const toolEnvLines = Object.entries(runtimeEnv).map(([k, v]) => `export ${k}=${v}`);
   const totalSteps = tools.length + 1; // +1 for finalize step
   const installSteps = tools.map((tool, i) =>
-    `echo "STEP ${i + 1}/${totalSteps}: Installing ${tool}" && "$MISE" use --global "${tool}" --yes 2>/dev/null || true`
+    `echo "STEP ${i + 1}/${totalSteps}: Installing ${tool}" && "$MISE" use --global "${tool}" --yes`
   );
   const script = [
     'MISE=/home/agent/.local/bin/mise',
@@ -295,11 +295,12 @@ export async function installRuntimes(
     "--network", "slirp4netns",
     "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges",
+    "-e", "HOME=/home/agent",
     "-e", "MISE_DATA_DIR=/home/agent/.local/share/mise",
     "-e", `MISE_TOOLS=${tools.join(" ")}`,
     ...Object.entries(extraEnv).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
     "--mount", `type=volume,src=${dataVolume},dst=/home/agent/.local/share/mise`,
-    "--mount", `type=volume,src=${installsVolume},dst=/home/agent/.local/share/mise/installs`,
+    "-v", `${installsPath}:/home/agent/.local/share/mise/installs`,
     image,
     "-c", script,
   ], { stdout: "pipe", stderr: "pipe" });
@@ -323,15 +324,15 @@ export async function installDepsInShadow(opts: {
   shadowVolume: string;
   shadowDir: string;         // workspace-relative dir, e.g. "node_modules"
   image?: string;
-  miseVolume?: string;
-  binPathsFile?: string;     // path inside miseVolume to .bin-paths
+  miseInstallsPath?: string;
+  binPathsFile?: string;     // path inside miseInstallsPath to .bin-paths
 }): Promise<{ ok: boolean; error?: string }> {
   const image = opts.image ?? "sandbox-claude";
   const binPathsFile = opts.binPathsFile ?? "/home/agent/.local/share/mise/installs/.bin-paths";
 
   await runShell(`podman volume exists ${opts.shadowVolume} 2>/dev/null || podman volume create ${opts.shadowVolume}`);
 
-  const activateMise = opts.miseVolume
+  const activateMise = opts.miseInstallsPath
     ? `if [ -s ${binPathsFile} ]; then export PATH="$(cat ${binPathsFile}):$PATH"; fi`
     : "";
 
@@ -350,8 +351,8 @@ export async function installDepsInShadow(opts: {
     "--mount", `type=volume,src=${opts.shadowVolume},dst=/workspace/${opts.shadowDir}`,
   ];
 
-  if (opts.miseVolume) {
-    args.push("--mount", `type=volume,src=${opts.miseVolume},dst=/home/agent/.local/share/mise/installs`);
+  if (opts.miseInstallsPath) {
+    args.push("-v", `${opts.miseInstallsPath}:/home/agent/.local/share/mise/installs:ro`);
   }
 
   args.push(image, "-c", script);
@@ -389,7 +390,7 @@ export interface SpawnSandboxOpts {
   extraLabels?: Record<string, string>; // extra podman labels added to the container (caller-defined, for filtering)
   shadowDirs?: string[];      // forwarded as SHADOW_DIRS env var to sandbox-run.sh
   depCacheVolume?: string;    // pre-populated dep cache volume to use for the first shadow dir
-  miseVolume?: string;        // name of the pre-populated mise-installs volume to mount
+  miseInstallsPath?: string;  // host path to pre-populated mise-installs dir (bind-mounted :ro)
   interactive?: boolean;      // attach stdin/tty for direct terminal use
   containerMemory?: string;   // e.g. "8g" — overrides sandbox-run.sh default of 4g
   containerCpus?: number;     // e.g. 4 — overrides sandbox-run.sh default of 2
@@ -407,7 +408,7 @@ export async function spawnSandbox(opts: SpawnSandboxOpts) {
   if (opts.extraPodEnv) env.EXTRA_POD_ENV = opts.extraPodEnv;
   if (opts.shadowDirs && opts.shadowDirs.length > 0) env.SHADOW_DIRS = opts.shadowDirs.join(" ");
   if (opts.depCacheVolume) env.DEP_CACHE_VOLUME = opts.depCacheVolume;
-  if (opts.miseVolume) env.MISE_VOLUME = opts.miseVolume;
+  if (opts.miseInstallsPath) env.MISE_INSTALL_PATH = opts.miseInstallsPath;
   if (opts.interactive) env.INTERACTIVE = "1";
   if (opts.extraLabels) env.EXTRA_LABELS = Object.entries(opts.extraLabels).map(([k, v]) => `${k}=${v}`).join(" ");
   if (opts.containerMemory) env.CONTAINER_MEMORY = opts.containerMemory;

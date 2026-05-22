@@ -94,10 +94,14 @@ GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 SESSION_VOLUME="${SESSION_VOLUME:-task-session-${TASK_ID}}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
 
-# -- mise installs volume ------------------------------------------------------
+# -- mise installs bind mount --------------------------------------------------
 # Pre-populated at project settings save time (not at task launch).
-# MISE_VOLUME is set by the caller; defaults to mise-installs for single-project setups.
-MISE_VOLUME="${MISE_VOLUME:-mise-installs}"
+# MISE_INSTALL_PATH is a host directory bind-mounted :ro into the container.
+# If unset, no mise mount is added (runtimes unavailable but task still runs).
+MISE_MOUNT_FLAG=""
+if [ -n "${MISE_INSTALL_PATH:-}" ]; then
+  MISE_MOUNT_FLAG="-v ${MISE_INSTALL_PATH}:/usr/local/mise-installs:ro"
+fi
 
 # -- Shadow volumes (platform-specific build artifacts) ------------------------
 # SHADOW_DIRS is a space-separated list of workspace-relative dirs to shadow with
@@ -309,12 +313,14 @@ podman run --rm \
   -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-agent@sandbox}" \
   -e HOME=/home/agent \
   -e MISE_DATA_DIR=/home/agent/.local/share/mise \
+  -e CONTAINER_INIT_COMMANDS="${CONTAINER_INIT_COMMANDS:-}" \
+  -e BYPASS_HOSTS="${BYPASS_HOSTS:-}" \
   -v "$WORKTREE:/workspace:rw" \
   $SHADOW_MOUNTS \
   -v "$REPO_MOUNT" \
   --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
   --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude:ro" \
-  --mount "type=volume,src=${MISE_VOLUME},dst=/home/agent/.local/share/mise/installs:ro" \
+  ${MISE_MOUNT_FLAG} \
   -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
   "$IMAGE" \
   -c "
@@ -341,14 +347,20 @@ podman run --rm \
     fi
 
     # Activate pre-installed runtimes. Binaries were installed into the
-    # mise-installs volume by the pre-start container. mise is not present here.
-    _bin_paths_file=/home/agent/.local/share/mise/installs/.bin-paths
+    # mise-installs dir on the host and bind-mounted :ro at /usr/local/mise-installs.
+    _bin_paths_file=/usr/local/mise-installs/.bin-paths
     if [ -s \"\$_bin_paths_file\" ]; then
-      export PATH=\"\$(cat \"\$_bin_paths_file\"):\$PATH\"
+      _paths=\$(sed 's|/home/agent/.local/share/mise/installs|/usr/local/mise-installs|g' \"\$_bin_paths_file\")
+      export PATH=\"\$_paths:\$PATH\"
     fi
-    _tool_env_file=/home/agent/.local/share/mise/installs/.tool-env
+    _tool_env_file=/usr/local/mise-installs/.tool-env
     if [ -s \"\$_tool_env_file\" ]; then
       . \"\$_tool_env_file\"
+    fi
+
+    if [ -n \"\${CONTAINER_INIT_COMMANDS:-}\" ]; then
+      # Output suppressed to keep logs clean — TODO: make verbose a project setting
+      eval \"\$CONTAINER_INIT_COMMANDS\" > /dev/null 2>&1 || true
     fi
 
     AGENT_BIN=\"\${AGENT_BINARY:-claude}\"

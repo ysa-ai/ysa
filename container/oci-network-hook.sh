@@ -96,13 +96,82 @@ if [ -n "$HCI_IP" ] && [ "$HCI_IP" != "$HOST_IP" ]; then
   $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$HCI_IP" --dport "$SERVER_PORT" -j ACCEPT
 fi
 
-# Allow the slirp4netns gateway too — it may differ from HOST_IP and is used for DNS.
-# Also covers the case where proxy/server are reachable via the gateway IP.
+# Allow the slirp4netns gateway too — it may differ from HOST_IP and is used for proxy/server access.
 GATEWAY_IP=$($SUDO nsenter -t "$PID" -n ip route 2>/dev/null | awk '/default/{print $3; exit}') || true
 if [ -n "$GATEWAY_IP" ] && [ "$GATEWAY_IP" != "$HOST_IP" ]; then
   $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$GATEWAY_IP" --dport "$PROXY_PORT" -j ACCEPT
   $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$GATEWAY_IP" --dport "$SERVER_PORT" -j ACCEPT
-  $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p udp -d "$GATEWAY_IP" --dport 53 -j ACCEPT
+fi
+
+# Allow DNS to the slirp4netns DNS server (always gateway+1) and to HOST_IP/HCI_IP
+# (macOS Podman Machine also uses HOST_IP as a nameserver).
+# TCP:53 is needed for large DNS responses (e.g. MongoDB SRV records).
+if [ -n "$GATEWAY_IP" ]; then
+  GATEWAY_DNS="${GATEWAY_IP%.*}.$((${GATEWAY_IP##*.} + 1))"
+  $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p udp -d "$GATEWAY_DNS" --dport 53 -j ACCEPT
+  $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$GATEWAY_DNS" --dport 53 -j ACCEPT
+fi
+for dns_host in "$HOST_IP" "${HCI_IP:-}"; do
+  [ -z "$dns_host" ] && continue
+  $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p udp -d "$dns_host" --dport 53 -j ACCEPT
+  $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$dns_host" --dport 53 -j ACCEPT
+done
+
+# Per-project bypass hosts — direct TCP access, skips proxy (for raw TCP protocols like MongoDB)
+BYPASS_HOSTS_VAL=""
+if [ -n "$BUNDLE" ] && [ -f "$BUNDLE/config.json" ]; then
+  BYPASS_HOSTS_VAL=$(jq -r '.process.env[] | select(startswith("BYPASS_HOSTS=")) | ltrimstr("BYPASS_HOSTS=")' "$BUNDLE/config.json" 2>/dev/null | head -1) || true
+fi
+
+if [ -n "$BYPASS_HOSTS_VAL" ]; then
+  OLD_IFS="$IFS"
+  IFS=','
+  for entry in $BYPASS_HOSTS_VAL; do
+    IFS="$OLD_IFS"
+    entry=$(echo "$entry" | tr -d ' ')
+    [ -z "$entry" ] && continue
+    host="${entry%%:*}"
+    port=""
+    if [ "$entry" != "$host" ]; then
+      port="${entry##*:}"
+    fi
+
+    RESOLVED_IPS=""
+
+    if command -v dig >/dev/null 2>&1; then
+      # Direct A record
+      A_IPS=$(dig +short A "$host" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$') || true
+      RESOLVED_IPS="$A_IPS"
+
+      # SRV chain (covers MongoDB and similar cloud DBs where the hostname has no direct A record)
+      SRV_OUT=$(dig +short SRV "_mongodb._tcp.$host" 2>/dev/null) || true
+      if [ -n "$SRV_OUT" ]; then
+        while read -r _pri _wt _sp srv_target; do
+          [ -z "$srv_target" ] && continue
+          srv_target="${srv_target%.}"
+          NODE_IPS=$(dig +short A "$srv_target" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$') || true
+          RESOLVED_IPS="$RESOLVED_IPS $NODE_IPS"
+        done <<EOF
+$SRV_OUT
+EOF
+      fi
+    else
+      RESOLVED_IPS=$(getent hosts "$host" 2>/dev/null | awk '{print $1}') || true
+    fi
+
+    for ip in $RESOLVED_IPS; do
+      [ -z "$ip" ] && continue
+      if [ -n "$port" ]; then
+        $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$ip" --dport "$port" -j ACCEPT
+      else
+        $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$ip" -j ACCEPT
+      fi
+      echo "[oci-hook] Bypass ACCEPT: $host ($ip)${port:+:$port}" >&2
+    done
+
+    IFS=','
+  done
+  IFS="$OLD_IFS"
 fi
 
 # Drop everything else (already default, but explicit for clarity)

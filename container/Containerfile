@@ -83,7 +83,7 @@ RUN rm -f /usr/bin/passwd /usr/bin/chage /usr/bin/chfn /usr/bin/chsh \
 # sandbox-guard.sh goes ONLY into /etc/claude-defaults/hooks (read-only image layer)
 # settings.json references /etc/claude-defaults/hooks/sandbox-guard.sh so the agent
 # cannot modify the active hook regardless of what it does to /home/agent
-RUN mkdir -p /home/agent/.claude /etc/claude-defaults/hooks && \
+RUN mkdir -p /home/agent/.claude /usr/local/mise-installs /etc/claude-defaults/hooks && \
     chown -R agent:agent /home/agent/.claude
 COPY claude-settings.json /home/agent/.claude/settings.json
 COPY claude-settings.json /etc/claude-defaults/settings.json
