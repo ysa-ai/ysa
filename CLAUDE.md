@@ -31,7 +31,7 @@ src/
   db/            — Drizzle schema + migrations (~/.ysa/core.db)
   dashboard/     — React components (props-based, no internal tRPC)
   lib/           — resources, resource-poller
-  providers/     — Claude, Mistral adapters + registry
+  providers/     — Claude, Mistral, DeepSeek adapters + registry
   runtime/       — sandbox orchestration (runner, container, proxy, worktree, auth)
   server/        — Hono app
 client/          — React entry (wires tRPC to dashboard components)
@@ -45,9 +45,23 @@ All config in SQLite (`~/.ysa/core.db`), no `.env` needed. Config table: `projec
 
 Worktrees always at `${project_root}/.ysa/worktrees/`. DB and logs at `${project_root}/.ysa/`.
 
+### `.ysa.toml` — per-project sandbox config
+
+```toml
+[sandbox]
+runtimes = ["node@22", "python@3.12"]   # mise tools pre-installed before agent starts
+packages = ["libpq-dev", "chromium"]    # apt/apk packages baked into a project image layer
+global_packages = ["pip:playwright", "npm:@playwright/mcp@latest"]  # global installs (prefix: pip/npm/gem/cargo/go/bun)
+init_commands = ["redis-server --daemonize yes"]  # commands run inside container before agent
+```
+
+Mise installs cache: `~/.cache/ysa-agent/mise-installs/<hash>/` (host bind-mount, not a Podman volume).
+
 ## Adding a provider
 
 Implement `ProviderAdapter` from `src/providers/types.ts`, register in `src/providers/registry.ts`.
+
+Set `bypassHosts` on the adapter if the provider's API endpoint must be accessed directly (bypasses the proxy and iptables filtering for those hosts). API keys for non-Claude providers are stored via `ysa key set <provider>` and retrieved with `getApiKey(provider)` from `src/cli/keystore`.
 
 ## Migrations
 

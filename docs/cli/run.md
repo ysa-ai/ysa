@@ -21,6 +21,7 @@ ysa run <prompt> [options]
 | `-v, --verbose` | boolean | — | Show full output including tool calls |
 | `-i, --interactive` | boolean | — | Attach a live terminal session inside the sandbox |
 | `--no-commit` | boolean | — | Prevent the agent from committing to git |
+| `--provider <provider>` | `claude\|deepseek\|mistral` | `claude` | LLM provider to use |
 
 ## Examples
 
