@@ -103,14 +103,13 @@ if [ -n "$GATEWAY_IP" ] && [ "$GATEWAY_IP" != "$HOST_IP" ]; then
   $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$GATEWAY_IP" --dport "$SERVER_PORT" -j ACCEPT
 fi
 
-# Allow DNS to the slirp4netns DNS server (always gateway+1) and to HOST_IP/HCI_IP
-# (macOS Podman Machine also uses HOST_IP as a nameserver).
-# TCP:53 is needed for large DNS responses (e.g. MongoDB SRV records).
-if [ -n "$GATEWAY_IP" ]; then
-  GATEWAY_DNS="${GATEWAY_IP%.*}.$((${GATEWAY_IP##*.} + 1))"
-  $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p udp -d "$GATEWAY_DNS" --dport 53 -j ACCEPT
-  $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "$GATEWAY_DNS" --dport 53 -j ACCEPT
-fi
+# Allow DNS to the slirp4netns subnet (10.0.2.0/24) and to HOST_IP/HCI_IP.
+# slirp4netns configures the network AFTER createRuntime hooks fire, so the
+# gateway/DNS IPs are not yet in the routing table at hook time. Using the
+# subnet covers the DNS server (always 10.0.2.3 with default slirp4netns).
+# TCP:53 is required for large responses (e.g. MongoDB SRV records).
+$SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p udp -d "10.0.2.0/24" --dport 53 -j ACCEPT
+$SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p tcp -d "10.0.2.0/24" --dport 53 -j ACCEPT
 for dns_host in "$HOST_IP" "${HCI_IP:-}"; do
   [ -z "$dns_host" ] && continue
   $SUDO nsenter -t "$PID" -n iptables -A OUTPUT -p udp -d "$dns_host" --dport 53 -j ACCEPT
