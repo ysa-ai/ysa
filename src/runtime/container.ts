@@ -1,6 +1,6 @@
 import { readFile, stat } from "fs/promises";
 import { existsSync } from "fs";
-import { resolve } from "path";
+import { resolve, basename } from "path";
 import { getProvider } from "../providers";
 
 async function fileExists(path: string): Promise<boolean> {
@@ -39,6 +39,10 @@ export function setContainerDir(dir: string): void {
   CONTAINER_DIR = dir;
 }
 
+export function getContainerDir(): string {
+  return CONTAINER_DIR;
+}
+
 export async function getSeccompProfile(): Promise<string> {
   return resolve(_containerDir, "seccomp.json");
 }
@@ -71,25 +75,59 @@ export function projectImageName(projectRoot: string, provider: string): string 
 
 // Build a project-specific image by layering packages on top of the provider's base image.
 // Much faster than a full Containerfile build — only adds one layer.
+function globalInstallCmd(manager: string, pkgs: string[]): string {
+  const list = pkgs.join(" ");
+  switch (manager) {
+    case "pip":    return `pip install --no-cache-dir --break-system-packages ${list} && rm -rf /root/.cache/pip`;
+    case "npm":    return `npm install -g ${list} && npm cache clean --force`;
+    case "gem":    return `gem install --no-document ${list}`;
+    case "cargo":  return `cargo install ${list} && rm -rf /root/.cargo/registry`;
+    case "go":     return `go install ${list} && go clean -cache`;
+    default:       return `bun add -g ${list} && rm -rf /usr/local/.bun-cache /home/agent/.bun /tmp/bun*`;
+  }
+}
+
 export async function buildProjectImage(
   packages: string[],
   targetImage: string,
   fromImage: string,
   packageManager: "apt" | "apk",
+  globalPackages: string[] = [],
   onLog?: (line: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  const installCmd = packageManager === "apt"
-    ? `apt-get update && apt-get install -y --no-install-recommends ${packages.join(" ")} && rm -rf /var/lib/apt/lists/*`
-    : `apk add --no-cache ${packages.join(" ")}`;
+  const lines = [`FROM ${fromImage}`, "USER root"];
 
-  const dockerfile = [
-    `FROM ${fromImage}`,
-    "USER root",
-    `RUN ${installCmd}`,
-    "USER agent",
-  ].join("\n");
+  if (packages.length > 0) {
+    const installCmd = packageManager === "apt"
+      ? `apt-get update && apt-get install -y --no-install-recommends ${packages.join(" ")} && rm -rf /var/lib/apt/lists/*`
+      : `apk add --no-cache ${packages.join(" ")}`;
+    lines.push(`RUN ${installCmd}`);
+    if (packageManager === "apt") {
+      lines.push(`RUN awk -F: 'BEGIN{OFS=":"} !($1!="root" && $6=="/")' /etc/passwd > /tmp/passwd.tmp && mv /tmp/passwd.tmp /etc/passwd`);
+    }
+  }
 
-  const packagesHash = Bun.hash([...packages].sort().join(",")).toString(16);
+  const byManager = new Map<string, string[]>();
+  for (const entry of globalPackages) {
+    const sep = entry.indexOf(":");
+    if (sep === -1) continue;
+    const manager = entry.slice(0, sep);
+    const pkg = entry.slice(sep + 1);
+    const list = byManager.get(manager) ?? [];
+    list.push(pkg);
+    byManager.set(manager, list);
+  }
+  for (const [manager, pkgs] of byManager) {
+    lines.push(`RUN ${globalInstallCmd(manager, pkgs)}`);
+  }
+
+  lines.push("USER agent");
+  const dockerfile = lines.join("\n");
+
+  const hashInput = globalPackages.length > 0
+    ? [...packages].sort().join(",") + "|" + [...globalPackages].sort().join(",")
+    : [...packages].sort().join(",");
+  const packagesHash = Bun.hash(hashInput).toString(16);
   const proc = Bun.spawn(
     ["podman", "build", "-t", targetImage, "--label", `ysa.packages=${packagesHash}`, "-f", "-", "."],
     { stdin: new TextEncoder().encode(dockerfile), stdout: "pipe", stderr: "pipe" },
@@ -109,6 +147,17 @@ export async function buildProjectImage(
 export async function getImagePackagesHash(image: string): Promise<string | null> {
   const proc = Bun.spawn(
     ["podman", "image", "inspect", image, "--format", "{{index .Labels \"ysa.packages\"}}"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const stdout = await new Response(proc.stdout).text();
+  await proc.exited;
+  const val = stdout.trim();
+  return val || null;
+}
+
+export async function getImageCfHash(image: string): Promise<string | null> {
+  const proc = Bun.spawn(
+    ["podman", "image", "inspect", image, "--format", "{{index .Labels \"ysa.cf-hash\"}}"],
     { stdout: "pipe", stderr: "pipe" },
   );
   const stdout = await new Response(proc.stdout).text();
@@ -141,9 +190,12 @@ export async function rebuildSandboxImage(opts: RebuildSandboxImageOpts): Promis
 
   const extraPackages = apkPackages.join(" ");
   const packagesHash = Bun.hash([...apkPackages].sort().join(",")).toString(16);
+  const cfContent = await Bun.file(resolve(CONTAINER_DIR, "Containerfile")).text();
+  const cfHash = Bun.hash(cfContent).toString(16);
   const proc = Bun.spawn([
     "podman", "build", "-t", image,
     "--label", `ysa.packages=${packagesHash}`,
+    "--label", `ysa.cf-hash=${cfHash}`,
     "--build-arg", `EXTRA_PACKAGES=${extraPackages}`,
     "--build-arg", `AGENT=${agent}`,
     "-f", `${CONTAINER_DIR}/Containerfile`,
@@ -195,13 +247,13 @@ export async function buildBaseImages(caDir: string, onLog?: (line: string) => v
   return buildProxyImage(caDir, onLog);
 }
 
-// Install language runtimes into a named mise-installs volume via a short-lived
+// Install language runtimes into a host-side bind-mount directory via a short-lived
 // container. Runs WITHOUT --tmpfs /home/agent so the image's mise binary is
 // accessible from the image layer. Writes resolved bin paths to .bin-paths
-// inside the volume so task containers can activate tools without touching mise.
+// inside the dir so task containers can activate tools without touching mise.
 export async function installRuntimes(
   tools: string[],
-  installsVolume: string,
+  installsPath: string,
   image: string = "sandbox-claude",
   extraEnv: Record<string, string> = {},
   runtimeEnv: Record<string, string> = {},
@@ -210,15 +262,15 @@ export async function installRuntimes(
 ): Promise<{ ok: boolean; error?: string }> {
   if (tools.length === 0) return { ok: true };
 
-  const dataVolume = installsVolume.replace(/^mise-installs/, "mise-data");
+  const dataVolume = `mise-data-${basename(installsPath)}`;
 
-  await runShell(`podman volume exists ${installsVolume} 2>/dev/null || podman volume create ${installsVolume}`);
+  await runShell(`mkdir -p "${installsPath}"`);
   await runShell(`podman volume exists ${dataVolume} 2>/dev/null || podman volume create ${dataVolume}`);
 
   const toolEnvLines = Object.entries(runtimeEnv).map(([k, v]) => `export ${k}=${v}`);
   const totalSteps = tools.length + 1; // +1 for finalize step
   const installSteps = tools.map((tool, i) =>
-    `echo "STEP ${i + 1}/${totalSteps}: Installing ${tool}" && "$MISE" use --global "${tool}" --yes 2>/dev/null || true`
+    `echo "STEP ${i + 1}/${totalSteps}: Installing ${tool}" && "$MISE" use --global "${tool}" --yes`
   );
   const script = [
     'MISE=/home/agent/.local/bin/mise',
@@ -243,11 +295,12 @@ export async function installRuntimes(
     "--network", "slirp4netns",
     "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges",
+    "-e", "HOME=/home/agent",
     "-e", "MISE_DATA_DIR=/home/agent/.local/share/mise",
     "-e", `MISE_TOOLS=${tools.join(" ")}`,
     ...Object.entries(extraEnv).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
     "--mount", `type=volume,src=${dataVolume},dst=/home/agent/.local/share/mise`,
-    "--mount", `type=volume,src=${installsVolume},dst=/home/agent/.local/share/mise/installs`,
+    "-v", `${installsPath}:/home/agent/.local/share/mise/installs`,
     image,
     "-c", script,
   ], { stdout: "pipe", stderr: "pipe" });
@@ -271,15 +324,15 @@ export async function installDepsInShadow(opts: {
   shadowVolume: string;
   shadowDir: string;         // workspace-relative dir, e.g. "node_modules"
   image?: string;
-  miseVolume?: string;
-  binPathsFile?: string;     // path inside miseVolume to .bin-paths
+  miseInstallsPath?: string;
+  binPathsFile?: string;     // path inside miseInstallsPath to .bin-paths
 }): Promise<{ ok: boolean; error?: string }> {
   const image = opts.image ?? "sandbox-claude";
   const binPathsFile = opts.binPathsFile ?? "/home/agent/.local/share/mise/installs/.bin-paths";
 
   await runShell(`podman volume exists ${opts.shadowVolume} 2>/dev/null || podman volume create ${opts.shadowVolume}`);
 
-  const activateMise = opts.miseVolume
+  const activateMise = opts.miseInstallsPath
     ? `if [ -s ${binPathsFile} ]; then export PATH="$(cat ${binPathsFile}):$PATH"; fi`
     : "";
 
@@ -298,8 +351,8 @@ export async function installDepsInShadow(opts: {
     "--mount", `type=volume,src=${opts.shadowVolume},dst=/workspace/${opts.shadowDir}`,
   ];
 
-  if (opts.miseVolume) {
-    args.push("--mount", `type=volume,src=${opts.miseVolume},dst=/home/agent/.local/share/mise/installs`);
+  if (opts.miseInstallsPath) {
+    args.push("-v", `${opts.miseInstallsPath}:/home/agent/.local/share/mise/installs:ro`);
   }
 
   args.push(image, "-c", script);
@@ -337,8 +390,11 @@ export interface SpawnSandboxOpts {
   extraLabels?: Record<string, string>; // extra podman labels added to the container (caller-defined, for filtering)
   shadowDirs?: string[];      // forwarded as SHADOW_DIRS env var to sandbox-run.sh
   depCacheVolume?: string;    // pre-populated dep cache volume to use for the first shadow dir
-  miseVolume?: string;        // name of the pre-populated mise-installs volume to mount
+  miseInstallsPath?: string;  // host path to pre-populated mise-installs dir (bind-mounted :ro)
   interactive?: boolean;      // attach stdin/tty for direct terminal use
+  containerMemory?: string;   // e.g. "8g" — overrides sandbox-run.sh default of 4g
+  containerCpus?: number;     // e.g. 4 — overrides sandbox-run.sh default of 2
+  containerPidsLimit?: number; // e.g. 1024 — overrides sandbox-run.sh default of 512
 }
 
 export async function spawnSandbox(opts: SpawnSandboxOpts) {
@@ -352,9 +408,12 @@ export async function spawnSandbox(opts: SpawnSandboxOpts) {
   if (opts.extraPodEnv) env.EXTRA_POD_ENV = opts.extraPodEnv;
   if (opts.shadowDirs && opts.shadowDirs.length > 0) env.SHADOW_DIRS = opts.shadowDirs.join(" ");
   if (opts.depCacheVolume) env.DEP_CACHE_VOLUME = opts.depCacheVolume;
-  if (opts.miseVolume) env.MISE_VOLUME = opts.miseVolume;
+  if (opts.miseInstallsPath) env.MISE_INSTALL_PATH = opts.miseInstallsPath;
   if (opts.interactive) env.INTERACTIVE = "1";
   if (opts.extraLabels) env.EXTRA_LABELS = Object.entries(opts.extraLabels).map(([k, v]) => `${k}=${v}`).join(" ");
+  if (opts.containerMemory) env.CONTAINER_MEMORY = opts.containerMemory;
+  if (opts.containerCpus !== undefined) env.CONTAINER_CPUS = String(opts.containerCpus);
+  if (opts.containerPidsLimit !== undefined) env.CONTAINER_PIDS_LIMIT = String(opts.containerPidsLimit);
 
   return Bun.spawn(
     [

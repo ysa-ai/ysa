@@ -4,7 +4,7 @@
 # Paths:
 #   /workspace  — worktree (rw)
 #   /output     — output directory (rw)
-#   /repo.git   — main repo git dir (ro or rw)
+#   /tmp/repo.git   — main repo git dir (ro or rw)
 #
 # Exit 0 = allow, Exit 2 = block (message in stderr)
 
@@ -18,7 +18,7 @@ fi
 CONTEXT_ID="${CONTEXT_ID:-unknown}"
 WORKTREE="/workspace"
 OUTPUT_DIR="/output"
-MAIN_REPO="/repo.git"
+MAIN_REPO="/tmp/repo.git"
 
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')

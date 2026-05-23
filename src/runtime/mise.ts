@@ -1,5 +1,6 @@
-import { stat } from "fs/promises";
+import { stat, readFile } from "fs/promises";
 import { join } from "path";
+import { homedir } from "os";
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -20,25 +21,27 @@ async function runShell(cmd: string): Promise<{ ok: boolean; stdout: string; std
   return { ok: exitCode === 0, stdout: stdout.trim(), stderr: stderr.trim() };
 }
 
-function volumeNameForProject(projectRoot: string): string {
+function installsPathForProject(projectRoot: string): string {
   const hash = Bun.hash(projectRoot).toString(16).slice(0, 8);
-  return `mise-installs-${hash}`;
+  return join(homedir(), ".cache", "ysa-agent", "mise-installs", hash);
 }
 
 function hashTools(tools: string[]): string {
   return Bun.hash([...tools].sort().join(",")).toString(16);
 }
 
-async function getVolumeToolsHash(volume: string): Promise<string | null> {
-  const { ok, stdout } = await runShell(
-    `podman volume inspect ${volume} --format '{{index .Labels "ysa.tools-hash"}}' 2>/dev/null`,
-  );
-  return ok && stdout.trim() ? stdout.trim() : null;
+async function getToolsHash(installsPath: string): Promise<string | null> {
+  try {
+    const content = await readFile(join(installsPath, ".tools-hash"), "utf-8");
+    return content.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 // Ensure mise runtimes are pre-installed for the project.
-// Returns the mise-installs volume name if tools were found/installed, undefined otherwise.
-// Fast path: if the volume already has a matching tools hash, returns immediately.
+// Returns the mise-installs host path if tools were found/installed, undefined otherwise.
+// Fast path: if the installs dir already has a matching tools hash, returns immediately.
 // toolsOverride: explicit list from .ysa.toml — takes precedence over file detection.
 export async function ensureMiseRuntimes(
   projectRoot: string,
@@ -54,25 +57,20 @@ export async function ensureMiseRuntimes(
     const hasMiseToml = await fileExists(join(projectRoot, ".mise.toml"));
     const hasToolVersions = await fileExists(join(projectRoot, ".tool-versions"));
     if (!hasMiseToml && !hasToolVersions) return undefined;
-    // Tools will be read from project files by mise itself inside the container
-    tools = ["__auto__"]; // sentinel meaning: use mise's own file detection
+    tools = ["__auto__"];
   }
 
-  const installsVolume = volumeNameForProject(projectRoot);
-  const dataVolume = installsVolume.replace("mise-installs", "mise-data");
+  const installsPath = installsPathForProject(projectRoot);
+  const hash = installsPath.split("/").pop() ?? "mise";
+  const dataVolume = `mise-data-${hash}`;
   const targetHash = hashTools(tools);
 
-  if (await getVolumeToolsHash(installsVolume) === targetHash) return installsVolume;
+  if (await getToolsHash(installsPath) === targetHash) return installsPath;
 
   onProgress?.("Installing runtimes via mise...");
 
-  // Recreate installs volume with updated label so the hash persists cross-platform
-  // (podman volume mountpoints are inside the VM on macOS, not accessible from host)
-  await runShell(`podman volume rm ${installsVolume} 2>/dev/null || true`);
-  await runShell(`podman volume create --label ysa.tools-hash=${targetHash} ${installsVolume}`);
-  await runShell(
-    `podman volume exists ${dataVolume} 2>/dev/null || podman volume create ${dataVolume}`,
-  );
+  await runShell(`rm -rf "${installsPath}" && mkdir -p "${installsPath}"`);
+  await runShell(`podman volume exists ${dataVolume} 2>/dev/null || podman volume create ${dataVolume}`);
 
   const isAuto = tools[0] === "__auto__";
   const installCmd = isAuto
@@ -92,9 +90,10 @@ export async function ensureMiseRuntimes(
     "--network", "slirp4netns",
     "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges",
+    "-e", "HOME=/home/agent",
     "-e", "MISE_DATA_DIR=/home/agent/.local/share/mise",
     "--mount", `type=volume,src=${dataVolume},dst=/home/agent/.local/share/mise`,
-    "--mount", `type=volume,src=${installsVolume},dst=/home/agent/.local/share/mise/installs`,
+    "-v", `${installsPath}:/home/agent/.local/share/mise/installs`,
   ];
 
   if (isAuto) {
@@ -106,8 +105,8 @@ export async function ensureMiseRuntimes(
   const proc = Bun.spawn(runArgs, { stdout: "pipe", stderr: "pipe" });
   await proc.exited;
 
-  // Non-fatal: task runs without pre-loaded runtimes if install fails
   if (proc.exitCode !== 0) return undefined;
 
-  return installsVolume;
+  await Bun.write(join(installsPath, ".tools-hash"), targetHash);
+  return installsPath;
 }

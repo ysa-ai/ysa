@@ -185,15 +185,19 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   // 7. Read .ysa.toml and resolve project image
   const ysaConfig = await readYsaConfig(config.projectRoot);
   const aptPackages = ysaConfig.sandbox?.packages ?? [];
+  const globalPackages = ysaConfig.sandbox?.global_packages ?? [];
   let agentImage = adapter.containerImage;
 
-  if (aptPackages.length > 0) {
+  if (aptPackages.length > 0 || globalPackages.length > 0) {
     const projImage = projectImageName(config.projectRoot, adapter.id);
-    const targetHash = Bun.hash([...aptPackages].sort().join(",")).toString(16);
+    const hashInput = globalPackages.length > 0
+      ? [...aptPackages].sort().join(",") + "|" + [...globalPackages].sort().join(",")
+      : [...aptPackages].sort().join(",");
+    const targetHash = Bun.hash(hashInput).toString(16);
     const currentHash = await getImagePackagesHash(projImage);
     if (currentHash !== targetHash) {
       emitProgress("Building project sandbox image...");
-      const built = await buildProjectImage(aptPackages, projImage, adapter.containerImage, adapter.packageManager, (line) => emitProgress(line));
+      const built = await buildProjectImage(aptPackages, projImage, adapter.containerImage, adapter.packageManager, globalPackages, (line) => emitProgress(line));
       if (!built.ok) {
         failWith(new Error(`Image build failed: ${built.error}`));
         return handle;
@@ -205,12 +209,13 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   // 8. Proxy auto-start
   if (config.networkPolicy === "strict") {
     emitProgress("Starting network proxy...");
-    await ensureProxy(config.proxyRules, undefined, config.serverPort);
+    const allBypassHosts = [...(adapter.bypassHosts ?? []), ...(config.bypassHosts ?? [])];
+    await ensureProxy(config.proxyRules, allBypassHosts, config.serverPort);
   }
 
   // 9. Mise pre-install
-  const miseVolume =
-    config.miseVolume ??
+  const miseInstallsPath =
+    config.miseInstallsPath ??
     (await ensureMiseRuntimes(
       config.projectRoot,
       agentImage,
@@ -243,7 +248,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
         shadowVolume,
         shadowDir,
         image: agentImage,
-        miseVolume,
+        miseInstallsPath,
       });
       if (!installResult.ok) {
         failWith(new Error(`Dependency install failed: ${installResult.error}`));
@@ -259,6 +264,9 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   // 11. Spawn sandbox
   const env: Record<string, string> = { ...authEnv, ...containerConfig.envVars, ...config.extraEnv };
   if (config.promptUrl) env.PROMPT_URL = config.promptUrl;
+  const initCommands = ysaConfig.sandbox?.init_commands ?? [];
+  if (initCommands.length > 0) env.CONTAINER_INIT_COMMANDS = initCommands.join(" ; ");
+  if (config.bypassHosts?.length) env.BYPASS_HOSTS = config.bypassHosts.join(",");
 
   emitProgress("Starting agent...");
   let proc: Awaited<ReturnType<typeof spawnSandbox>>;
@@ -284,7 +292,10 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
       extraLabels: config.extraLabels,
       shadowDirs: config.shadowDirs,
       depCacheVolume,
-      miseVolume,
+      miseInstallsPath,
+      containerMemory: config.containerMemory,
+      containerCpus: config.containerCpus,
+      containerPidsLimit: config.containerPidsLimit,
     });
   } catch (err) {
     failWith(err instanceof Error ? err : new Error(String(err)));

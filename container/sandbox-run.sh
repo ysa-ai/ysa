@@ -5,7 +5,7 @@
 #
 # Modes: readonly, readwrite
 #
-# Mounts: worktree (/workspace), git dir (/repo.git) -- nothing else.
+# Mounts: worktree (/workspace), git dir (/tmp/repo.git) -- nothing else.
 # Session persistence via podman named volume (task-session-{task_id}).
 # Log capture via stdout pipe on host (tee).
 #
@@ -70,11 +70,11 @@ WORKTREE_NAME="$(basename "$WORKTREE")"
 # -- Mode-based access control ------------------------------------------------
 case "$MODE" in
   readonly)
-    REPO_MOUNT="$REPO_GIT:/repo.git:ro"
+    REPO_MOUNT="$REPO_GIT:/tmp/repo.git:ro"
     SANDBOX_MODE="readonly"
     ;;
   readwrite)
-    REPO_MOUNT="$REPO_GIT:/repo.git:rw"
+    REPO_MOUNT="$REPO_GIT:/tmp/repo.git:rw"
     SANDBOX_MODE="readwrite"
     ;;
   *)
@@ -94,10 +94,14 @@ GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 SESSION_VOLUME="${SESSION_VOLUME:-task-session-${TASK_ID}}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
 
-# -- mise installs volume ------------------------------------------------------
+# -- mise installs bind mount --------------------------------------------------
 # Pre-populated at project settings save time (not at task launch).
-# MISE_VOLUME is set by the caller; defaults to mise-installs for single-project setups.
-MISE_VOLUME="${MISE_VOLUME:-mise-installs}"
+# MISE_INSTALL_PATH is a host directory bind-mounted :ro into the container.
+# If unset, no mise mount is added (runtimes unavailable but task still runs).
+MISE_MOUNT_FLAG=""
+if [ -n "${MISE_INSTALL_PATH:-}" ]; then
+  MISE_MOUNT_FLAG="-v ${MISE_INSTALL_PATH}:/usr/local/mise-installs:ro"
+fi
 
 # -- Shadow volumes (platform-specific build artifacts) ------------------------
 # SHADOW_DIRS is a space-separated list of workspace-relative dirs to shadow with
@@ -118,8 +122,15 @@ done
 # -- Git worktree pointer ------------------------------------------------------
 # Write container-internal git pointers from the host before container starts,
 # so the container sees the correct paths without needing write access to them.
-echo "gitdir: /repo.git/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
+echo "gitdir: /tmp/repo.git/worktrees/$WORKTREE_NAME" > "$WORKTREE/.git"
 echo "/workspace/.git" > "$REPO_GIT/worktrees/$WORKTREE_NAME/gitdir"
+
+# -- Progress helper ----------------------------------------------------------
+progress() {
+  if [ -n "${LOG_FILE:-}" ]; then
+    printf '{"type":"system","subtype":"progress","message":"%s"}\n' "$1" >> "$LOG_FILE"
+  fi
+}
 
 # -- Network policy -----------------------------------------------------------
 NETWORK_POLICY="${NETWORK_POLICY:-none}"
@@ -144,6 +155,8 @@ echo "Worktree: $WORKTREE" >&2
 echo "Network: $NETWORK_POLICY" >&2
 echo "Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
 echo "Timeout: ${TIMEOUT}s" >&2
+echo "Memory: ${CONTAINER_MEMORY:-4g (default)}" >&2
+progress "Container memory limit: ${CONTAINER_MEMORY:-4g (default)}"
 echo "Args:$QUOTED_ARGS" >&2
 echo "=========================" >&2
 
@@ -151,13 +164,6 @@ echo "=========================" >&2
 podman_ver=$(podman version --format '{{.Client.Version}}' 2>/dev/null || echo "unknown")
 runtime_ver=$(podman info --format '{{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Version}}' 2>/dev/null | head -1 || echo "unknown")
 echo "Podman: $podman_ver, Runtime: $runtime_ver" >&2
-
-# -- Progress helper ----------------------------------------------------------
-progress() {
-  if [ -n "${LOG_FILE:-}" ]; then
-    printf '{"type":"system","subtype":"progress","message":"%s"}\n' "$1" >> "$LOG_FILE"
-  fi
-}
 
 # -- Log capture setup ---------------------------------------------------------
 if [ -n "${LOG_FILE:-}" ]; then
@@ -283,9 +289,9 @@ podman run --rm \
   --read-only \
   --tmpfs /tmp:rw,nosuid,size=256m \
   --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m \
-  --memory 4g \
-  --pids-limit 512 \
-  --cpus 2 \
+  --memory "${CONTAINER_MEMORY:-4g}" \
+  --pids-limit "${CONTAINER_PIDS_LIMIT:-512}" \
+  --cpus "${CONTAINER_CPUS:-2}" \
   --ulimit core=0 \
   --timeout "$TIMEOUT" \
   -e ALLOWED_BRANCH="$ALLOWED_BRANCH" \
@@ -305,16 +311,21 @@ podman run --rm \
   -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-agent@sandbox}" \
   -e GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Sandbox Agent}" \
   -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-agent@sandbox}" \
+  -e HOME=/home/agent \
   -e MISE_DATA_DIR=/home/agent/.local/share/mise \
+  -e CONTAINER_INIT_COMMANDS="${CONTAINER_INIT_COMMANDS:-}" \
+  -e BYPASS_HOSTS="${BYPASS_HOSTS:-}" \
   -v "$WORKTREE:/workspace:rw" \
   $SHADOW_MOUNTS \
   -v "$REPO_MOUNT" \
   --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
-  --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude" \
-  --mount "type=volume,src=${MISE_VOLUME},dst=/home/agent/.local/share/mise/installs" \
+  --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude:ro" \
+  ${MISE_MOUNT_FLAG} \
   -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
   "$IMAGE" \
   -c "
+    export HOME=/home/agent
+
     # Progress helper (JSON to stdout -> tee -> LOG_FILE)
     _progress() { printf '{\"type\":\"system\",\"subtype\":\"progress\",\"message\":\"%s\"}\\n' \"\$1\"; }
 
@@ -328,9 +339,6 @@ podman run --rm \
     if [ -n \"\${AGENT_INIT_SCRIPT:-}\" ]; then
       eval \"\$AGENT_INIT_SCRIPT\"
     else
-      if [ ! -f /home/agent/.claude/settings.json ] && [ -f /etc/claude-defaults/settings.json ]; then
-        cp /etc/claude-defaults/settings.json /home/agent/.claude/settings.json
-      fi
       if [ -f /home/agent/.claude.json ]; then
         jq '.hasCompletedOnboarding = true | .projects[\\\"/workspace\\\"].hasTrustDialogAccepted = true' /home/agent/.claude.json > /tmp/cj.json 2>/dev/null && cp /tmp/cj.json /home/agent/.claude.json && rm -f /tmp/cj.json
       else
@@ -339,14 +347,20 @@ podman run --rm \
     fi
 
     # Activate pre-installed runtimes. Binaries were installed into the
-    # mise-installs volume by the pre-start container. mise is not present here.
-    _bin_paths_file=/home/agent/.local/share/mise/installs/.bin-paths
+    # mise-installs dir on the host and bind-mounted :ro at /usr/local/mise-installs.
+    _bin_paths_file=/usr/local/mise-installs/.bin-paths
     if [ -s \"\$_bin_paths_file\" ]; then
-      export PATH=\"\$(cat \"\$_bin_paths_file\"):\$PATH\"
+      _paths=\$(sed 's|/home/agent/.local/share/mise/installs|/usr/local/mise-installs|g' \"\$_bin_paths_file\")
+      export PATH=\"\$_paths:\$PATH\"
     fi
-    _tool_env_file=/home/agent/.local/share/mise/installs/.tool-env
+    _tool_env_file=/usr/local/mise-installs/.tool-env
     if [ -s \"\$_tool_env_file\" ]; then
       . \"\$_tool_env_file\"
+    fi
+
+    if [ -n \"\${CONTAINER_INIT_COMMANDS:-}\" ]; then
+      # Output suppressed to keep logs clean — TODO: make verbose a project setting
+      eval \"\$CONTAINER_INIT_COMMANDS\" > /dev/null 2>&1 || true
     fi
 
     AGENT_BIN=\"\${AGENT_BINARY:-claude}\"

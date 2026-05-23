@@ -70,6 +70,22 @@ await runTask({
 
 A scoped rule allows **all HTTP methods** (GET, POST, PUT, etc.) for requests whose host matches and whose path starts with `pathPrefix`. Everything else still goes through the default strict policy.
 
+## Bypass hosts
+
+For services that don't speak HTTP/HTTPS (e.g. MongoDB, Redis, raw TCP), use `bypassHosts` to open a direct iptables `ACCEPT` rule that skips the proxy entirely:
+
+```ts
+await runTask({
+  ...
+  networkPolicy: "strict",
+  bypassHosts: ["cluster.mongodb.net", "my-db.redis.cloud:6380"],
+});
+```
+
+Entries can be `host` (all TCP ports) or `host:port`. DNS is resolved at container start time (including SRV chains for MongoDB clusters).
+
+Provider adapters can also declare `bypassHosts` to allow their API endpoint through unconditionally — see `src/providers/deepseek.ts` as an example.
+
 ## none (default)
 
 The container has no outbound network access at all — no proxy is started and the OCI network hooks block all outbound connections. Use this for pure code generation tasks.
@@ -78,3 +94,4 @@ The container has no outbound network access at all — no proxy is started and 
 
 - [`ysa run --network`](/cli/run) — set the policy from the CLI
 - [RunConfig.proxyRules](/api/run-task#runconfig-fields) — per-task scoped allow rules
+- [RunConfig.bypassHosts](/api/run-task#runconfig-fields) — direct TCP bypass (skips proxy)

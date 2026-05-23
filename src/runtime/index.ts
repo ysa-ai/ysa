@@ -3,7 +3,7 @@ export type { RunOptions } from "./runner";
 export { runInteractive } from "./interactive";
 export { getAuthEnv } from "./auth";
 export { createWorktree, removeWorktree, prepareWorktree } from "./worktree";
-export { spawnSandbox, stopContainer, teardownContainer, getSeccompProfile, setContainerDir, rebuildSandboxImage, buildProjectImage, buildProxyImage, buildBaseImages, installRuntimes, installDepsInShadow, projectImageName } from "./container";
+export { spawnSandbox, stopContainer, teardownContainer, getSeccompProfile, setContainerDir, getContainerDir, rebuildSandboxImage, buildProjectImage, buildProxyImage, buildBaseImages, installRuntimes, installDepsInShadow, projectImageName, getImagePackagesHash, getImageCfHash } from "./container";
 export type { SpawnSandboxOpts, RebuildSandboxImageOpts } from "./container";
 export { ensureProxy, stopProxy } from "./proxy";
 export type { ScopedAllowRule } from "./proxy";
