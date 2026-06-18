@@ -326,9 +326,11 @@ export async function installDepsInShadow(opts: {
   image?: string;
   miseInstallsPath?: string;
   binPathsFile?: string;     // path inside miseInstallsPath to .bin-paths
+  timeoutMs?: number;
 }): Promise<{ ok: boolean; error?: string }> {
   const image = opts.image ?? "sandbox-claude";
   const binPathsFile = opts.binPathsFile ?? "/home/agent/.local/share/mise/installs/.bin-paths";
+  const timeoutMs = opts.timeoutMs ?? 10 * 60 * 1000; // 10 minutes
 
   await runShell(`podman volume exists ${opts.shadowVolume} 2>/dev/null || podman volume create ${opts.shadowVolume}`);
 
@@ -346,6 +348,7 @@ export async function installDepsInShadow(opts: {
     "--userns=keep-id",
     "--network", "slirp4netns",
     "--cap-drop", "ALL",
+    "--cap-add", "CHOWN",
     "--security-opt", "no-new-privileges",
     "-v", `${opts.worktree}:/workspace:rw`,
     "--mount", `type=volume,src=${opts.shadowVolume},dst=/workspace/${opts.shadowDir}`,
@@ -360,10 +363,20 @@ export async function installDepsInShadow(opts: {
   const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
 
   const errLines: string[] = [];
-  await Promise.all([
-    streamLines(proc.stdout, () => {}),
-    streamLines(proc.stderr, (line) => errLines.push(line)),
-    proc.exited,
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => {
+      proc.kill();
+      reject(new Error(`Dependency install timed out after ${timeoutMs / 1000}s`));
+    }, timeoutMs)
+  );
+
+  await Promise.race([
+    Promise.all([
+      streamLines(proc.stdout, () => {}),
+      streamLines(proc.stderr, (line) => errLines.push(line)),
+      proc.exited,
+    ]),
+    timeout,
   ]);
 
   const ok = proc.exitCode === 0;
@@ -392,9 +405,10 @@ export interface SpawnSandboxOpts {
   depCacheVolume?: string;    // pre-populated dep cache volume to use for the first shadow dir
   miseInstallsPath?: string;  // host path to pre-populated mise-installs dir (bind-mounted :ro)
   interactive?: boolean;      // attach stdin/tty for direct terminal use
-  containerMemory?: string;   // e.g. "8g" — overrides sandbox-run.sh default of 4g
-  containerCpus?: number;     // e.g. 4 — overrides sandbox-run.sh default of 2
+  containerMemory?: string;    // e.g. "8g" — overrides sandbox-run.sh default of 4g
+  containerCpus?: number;      // e.g. 4 — overrides sandbox-run.sh default of 2
   containerPidsLimit?: number; // e.g. 1024 — overrides sandbox-run.sh default of 512
+  containerStackSize?: number; // e.g. 67108864 — ulimit stack in bytes (default: OS default ~8MB)
 }
 
 export async function spawnSandbox(opts: SpawnSandboxOpts) {
@@ -414,6 +428,7 @@ export async function spawnSandbox(opts: SpawnSandboxOpts) {
   if (opts.containerMemory) env.CONTAINER_MEMORY = opts.containerMemory;
   if (opts.containerCpus !== undefined) env.CONTAINER_CPUS = String(opts.containerCpus);
   if (opts.containerPidsLimit !== undefined) env.CONTAINER_PIDS_LIMIT = String(opts.containerPidsLimit);
+  if (opts.containerStackSize !== undefined) env.CONTAINER_STACK_SIZE = String(opts.containerStackSize);
 
   return Bun.spawn(
     [

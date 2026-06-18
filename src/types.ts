@@ -41,11 +41,14 @@ export interface RunConfig {
   extraLabels?: Record<string, string>; // extra podman labels on the container (for filtering by stop/teardown)
   proxyRules?: import("./runtime/proxy").ScopedAllowRule[]; // per-task scoped proxy allow rules
   bypassHosts?: string[]; // host or host:port — iptables ACCEPT + proxy bypass (skips all filtering)
+  containerInitCommands?: string[]; // commands run inside the container before the agent starts (e.g. ["redis-server --daemonize yes"])
+  packages?: string[]; // apt packages baked into the project image (e.g. ["redis-server"]) — merged with .ysa.toml sandbox.packages
   serverPort?: number; // host server port to bypass in proxy (e.g. dashboard port)
   allowCommit?: boolean; // whether the agent can commit to git (default: true)
   containerMemory?: string; // e.g. "8g"
   containerCpus?: number;
   containerPidsLimit?: number;
+  containerStackSize?: number; // JS stack ulimit in bytes, e.g. 67108864 for 64MB
 }
 
 // Handle returned immediately by runTask() — container may still be running

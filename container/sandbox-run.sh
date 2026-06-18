@@ -138,7 +138,7 @@ NETWORK_FLAGS=""
 PROXY_ENV_FLAGS=""
 
 if [ "$NETWORK_POLICY" = "strict" ] || [ "$NETWORK_POLICY" = "custom" ]; then
-  NETWORK_FLAGS="--annotation network_policy=$NETWORK_POLICY"
+  NETWORK_FLAGS="--annotation network_policy=$NETWORK_POLICY --sysctl net.ipv4.tcp_syn_retries=2"
   PROXY_URL="http://${TASK_ID}:x@host.containers.internal:3128"
   PROXY_ENV_FLAGS="-e HTTP_PROXY=$PROXY_URL -e HTTPS_PROXY=$PROXY_URL -e http_proxy=$PROXY_URL -e https_proxy=$PROXY_URL -e NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/ysa-proxy-ca.crt -e NODE_USE_ENV_PROXY=1 -e NODE_NO_WARNINGS=1"
   if [ -n "${NO_PROXY:-}" ]; then
@@ -293,6 +293,7 @@ podman run --rm \
   --pids-limit "${CONTAINER_PIDS_LIMIT:-512}" \
   --cpus "${CONTAINER_CPUS:-2}" \
   --ulimit core=0 \
+  ${CONTAINER_STACK_SIZE:+--ulimit stack=${CONTAINER_STACK_SIZE}:${CONTAINER_STACK_SIZE}} \
   --timeout "$TIMEOUT" \
   -e ALLOWED_BRANCH="$ALLOWED_BRANCH" \
   -e AGENT_BINARY="${AGENT_BINARY:-claude}" \
@@ -314,6 +315,7 @@ podman run --rm \
   -e HOME=/home/agent \
   -e MISE_DATA_DIR=/home/agent/.local/share/mise \
   -e CONTAINER_INIT_COMMANDS="${CONTAINER_INIT_COMMANDS:-}" \
+  -e CONTAINER_STACK_SIZE="${CONTAINER_STACK_SIZE:-}" \
   -e BYPASS_HOSTS="${BYPASS_HOSTS:-}" \
   -v "$WORKTREE:/workspace:rw" \
   $SHADOW_MOUNTS \
@@ -358,9 +360,31 @@ podman run --rm \
       . \"\$_tool_env_file\"
     fi
 
+    # V8 (node) ignores RLIMIT_STACK and caps JS recursion via --stack-size, which
+    # is disallowed in NODE_OPTIONS. When a larger stack ulimit is requested and node
+    # comes from mise, shim node to inject --stack-size (~85% of the ulimit, in KB) so
+    # deep parsers (webpack/sass on minified single-line CSS) don't overflow.
+    if [ -n \"\${CONTAINER_STACK_SIZE:-}\" ]; then
+      _real_node=\$(command -v node 2>/dev/null)
+      case \"\$_real_node\" in
+        */mise-installs/*)
+          _ss_kb=\$(( CONTAINER_STACK_SIZE / 1024 * 85 / 100 ))
+          _shim_dir=/home/agent/.local/stack-shim
+          mkdir -p \"\$_shim_dir\"
+          printf '#!/bin/sh\\nexec %s --stack-size=%s \"\$@\"\\n' \"\$_real_node\" \"\$_ss_kb\" > \"\$_shim_dir/node\"
+          chmod +x \"\$_shim_dir/node\"
+          export PATH=\"\$_shim_dir:\$PATH\"
+          ;;
+      esac
+    fi
+
     if [ -n \"\${CONTAINER_INIT_COMMANDS:-}\" ]; then
-      # Output suppressed to keep logs clean — TODO: make verbose a project setting
-      eval \"\$CONTAINER_INIT_COMMANDS\" > /dev/null 2>&1 || true
+      # Run init commands in the BACKGROUND so the agent can start working immediately
+      # (e.g. a project build can take minutes; the agent rarely needs it right away).
+      # Output goes to /tmp/ysa-init.log; /tmp/ysa-init.done holds the exit code on
+      # completion so the agent can wait for it before starting servers.
+      rm -f /tmp/ysa-init.done 2>/dev/null || true
+      ( eval \"\$CONTAINER_INIT_COMMANDS\" > /tmp/ysa-init.log 2>&1; echo \"\$?\" > /tmp/ysa-init.done ) &
     fi
 
     AGENT_BIN=\"\${AGENT_BINARY:-claude}\"

@@ -22,30 +22,42 @@ let cachedOAuthToken: string | null = null;
 let cachedTokenExpiresAt = 0;
 let cachedClientId: string | null = null;
 
-async function extractClientIdFromBinary(): Promise<string | null> {
-  if (cachedClientId) return cachedClientId;
+// Local dev placeholder baked into the binary — never a valid prod client.
+const DEV_PLACEHOLDER_CLIENT_ID = "00000000-0000-4000-8000-000000000000";
+
+// Returns every plausible OAuth client ID embedded in the claude binary, ordered
+// with the one tagged OAUTH_FILE_SUFFIX:"" first (the historical "prod" heuristic),
+// then any remaining IDs. The marker is not reliable across CLI versions, so we
+// keep all candidates and let the refresh path try each until one is accepted.
+async function extractClientIdsFromBinary(): Promise<string[]> {
   try {
     const which = Bun.spawn(["which", "claude"], { stdout: "pipe", stderr: "pipe" });
     const whichOut = (await new Response(which.stdout).text()).trim();
-    if ((await which.exited) !== 0 || !whichOut) return null;
+    if ((await which.exited) !== 0 || !whichOut) return [];
 
     const readlink = Bun.spawn(["readlink", "-f", whichOut], { stdout: "pipe", stderr: "pipe" });
     const binPath = (await new Response(readlink.stdout).text()).trim();
-    if ((await readlink.exited) !== 0 || !binPath) return null;
+    if ((await readlink.exited) !== 0 || !binPath) return [];
 
-    // Extract the production client ID (OAUTH_FILE_SUFFIX:"") — not the local dev one
-    const extract = Bun.spawn(
-      ["bash", "-c", `grep -oaE 'CLIENT_ID:"[0-9a-f-]+",OAUTH_FILE_SUFFIX:""' "${binPath}" 2>/dev/null | head -1 | grep -oE '"[0-9a-f-]+"' | head -1 | tr -d '"'`],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const clientId = (await new Response(extract.stdout).text()).trim();
-    if ((await extract.exited) !== 0 || !clientId) return null;
+    const preferred = (await runGrep(`grep -oaE 'CLIENT_ID:"[0-9a-f-]+",OAUTH_FILE_SUFFIX:""' "${binPath}" 2>/dev/null | grep -oE '[0-9a-f-]{36}'`));
+    const all = (await runGrep(`grep -oaE 'CLIENT_ID:"[0-9a-f-]+"' "${binPath}" 2>/dev/null | grep -oE '[0-9a-f-]{36}'`));
 
-    cachedClientId = clientId;
-    return clientId;
+    const ordered: string[] = [];
+    for (const id of [...preferred, ...all]) {
+      if (id === DEV_PLACEHOLDER_CLIENT_ID) continue;
+      if (!ordered.includes(id)) ordered.push(id);
+    }
+    return ordered;
   } catch {
-    return null;
+    return [];
   }
+}
+
+async function runGrep(cmd: string): Promise<string[]> {
+  const proc = Bun.spawn(["bash", "-c", cmd], { stdout: "pipe", stderr: "pipe" });
+  const out = (await new Response(proc.stdout).text()).trim();
+  await proc.exited;
+  return out ? out.split("\n").map((l) => l.trim()).filter(Boolean) : [];
 }
 
 async function readCredentials(): Promise<Record<string, any>> {
@@ -96,11 +108,13 @@ async function writeCredentials(creds: Record<string, any>): Promise<void> {
   }
 }
 
-async function refreshOAuthToken(refreshToken: string, clientId: string): Promise<{
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-}> {
+type RefreshOutcome =
+  | { kind: "success"; accessToken: string; refreshToken: string; expiresIn: number }
+  | { kind: "invalid_grant" }      // refresh token not valid for this client (or revoked)
+  | { kind: "client_not_found" }   // this client_id is unknown to the OAuth server
+  | { kind: "error"; detail: string };
+
+export async function refreshOAuthToken(refreshToken: string, clientId: string): Promise<RefreshOutcome> {
   const res = await fetch(OAUTH_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -115,13 +129,9 @@ async function refreshOAuthToken(refreshToken: string, clientId: string): Promis
     const body = await res.text();
     let parsed: any;
     try { parsed = JSON.parse(body); } catch { parsed = null; }
-    if (parsed?.error === "invalid_grant") {
-      throw new Error("invalid_grant");
-    }
-    if (parsed?.error?.type === "invalid_request_error") {
-      throw new Error("oauth_client_stale");
-    }
-    throw new Error(`OAuth refresh failed (${res.status}): ${body}`);
+    if (parsed?.error === "invalid_grant") return { kind: "invalid_grant" };
+    if (parsed?.error?.type === "invalid_request_error") return { kind: "client_not_found" };
+    return { kind: "error", detail: `HTTP ${res.status}: ${body.slice(0, 200)}` };
   }
 
   const data = await res.json() as {
@@ -131,10 +141,32 @@ async function refreshOAuthToken(refreshToken: string, clientId: string): Promis
   };
 
   return {
+    kind: "success",
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresIn: data.expires_in,
   };
+}
+
+type RefreshAllResult =
+  | { ok: true; clientId: string; tokens: { accessToken: string; refreshToken: string; expiresIn: number } }
+  | { ok: false; attempts: { clientId: string; reason: string }[] };
+
+// Try the refresh against each candidate client ID until one is accepted. Failed
+// attempts (invalid_grant / client_not_found) do NOT consume the refresh token —
+// only a successful refresh rotates it — so iterating is safe.
+export async function refreshWithCandidates(refreshToken: string, clientIds: string[]): Promise<RefreshAllResult> {
+  const attempts: { clientId: string; reason: string }[] = [];
+  for (const clientId of clientIds) {
+    const outcome = await refreshOAuthToken(refreshToken, clientId);
+    if (outcome.kind === "success") {
+      return { ok: true, clientId, tokens: outcome };
+    }
+    const reason = outcome.kind === "error" ? outcome.detail : outcome.kind;
+    attempts.push({ clientId, reason });
+    console.log(`[oauth] refresh with client ${clientId.slice(0, 8)}… → ${reason}`);
+  }
+  return { ok: false, attempts };
 }
 
 async function getOAuthToken(): Promise<string> {
@@ -151,61 +183,74 @@ async function getOAuthToken(): Promise<string> {
   const expiresAt = oauth.expiresAt || 0;
   const needsRefresh = Date.now() >= expiresAt - TOKEN_REFRESH_MARGIN_MS;
 
-  if (needsRefresh) {
-    if (!oauth.refreshToken) {
-      throw new Error("OAuth token expired and no refresh token available. Run 'claude /login'.");
-    }
-
-    const clientId = await extractClientIdFromBinary() ?? process.env.CLAUDE_CODE_OAUTH_CLIENT_ID;
-    if (!clientId) {
-      throw new Error("OAuth token expired and could not be refreshed. Run 'claude /login' to re-authenticate, or set the CLAUDE_CODE_OAUTH_CLIENT_ID env var.");
-    }
-    console.log("[oauth] Access token expired or expiring soon, refreshing...");
-    let refreshed: Awaited<ReturnType<typeof refreshOAuthToken>>;
-    try {
-      refreshed = await refreshOAuthToken(oauth.refreshToken, clientId);
-    } catch (err: any) {
-      if (err.message === "invalid_grant") {
-        // Refresh token was rotated by Claude CLI — re-read Keychain and retry once
-        const freshCreds = await readCredentials();
-        const freshOAuth = freshCreds.claudeAiOauth;
-        if (freshOAuth?.refreshToken && freshOAuth.refreshToken !== oauth.refreshToken) {
-          console.log("[oauth] Refresh token rotated by Claude CLI, retrying with fresh token...");
-          refreshed = await refreshOAuthToken(freshOAuth.refreshToken, clientId);
-          Object.assign(creds, freshCreds);
-          Object.assign(oauth, freshOAuth);
-        } else {
-          cachedOAuthToken = null;
-          cachedTokenExpiresAt = 0;
-          throw new Error("Claude session expired. Run 'claude /login' to re-authenticate.");
-        }
-      } else if (err.message === "oauth_client_stale") {
-        cachedClientId = null;
-        cachedOAuthToken = null;
-        cachedTokenExpiresAt = 0;
-        throw new Error("Claude OAuth client not recognized — update Claude CLI and run 'claude /login' to re-authenticate.");
-      } else {
-        throw err;
-      }
-    }
-
-    creds.claudeAiOauth = {
-      ...oauth,
-      accessToken: refreshed.accessToken,
-      refreshToken: refreshed.refreshToken,
-      expiresAt: Date.now() + refreshed.expiresIn * 1000,
-    };
-    await writeCredentials(creds);
-
-    cachedOAuthToken = refreshed.accessToken;
-    cachedTokenExpiresAt = Date.now() + refreshed.expiresIn * 1000;
-    console.log(`[oauth] Token refreshed, expires in ${(refreshed.expiresIn / 3600).toFixed(1)}h`);
-  } else {
+  if (!needsRefresh) {
     cachedOAuthToken = oauth.accessToken;
     cachedTokenExpiresAt = expiresAt;
+    return oauth.accessToken;
   }
 
-  return cachedOAuthToken!;
+  if (!oauth.refreshToken) {
+    throw new Error("OAuth token expired and no refresh token available. Run 'claude /login'.");
+  }
+
+  // Build candidate client IDs: the previously-successful one first (fast path),
+  // then an explicit env override, then every ID found in the claude binary. The
+  // OAUTH_FILE_SUFFIX:"" marker is not a reliable "prod" indicator across CLI
+  // versions, so we try each candidate rather than committing to one.
+  const candidates: string[] = [];
+  const push = (id?: string | null) => { if (id && !candidates.includes(id)) candidates.push(id); };
+  push(cachedClientId);
+  push(process.env.CLAUDE_CODE_OAUTH_CLIENT_ID);
+  for (const id of await extractClientIdsFromBinary()) push(id);
+
+  if (candidates.length === 0) {
+    throw new Error("OAuth token expired and no client ID could be determined (claude binary not found). Run 'claude /login', or set CLAUDE_CODE_OAUTH_CLIENT_ID.");
+  }
+
+  console.log(`[oauth] Access token expired or expiring soon, refreshing (trying ${candidates.length} client ID(s))...`);
+  let result = await refreshWithCandidates(oauth.refreshToken, candidates);
+
+  // The Claude CLI may have rotated the refresh token under us — re-read once and retry.
+  if (!result.ok) {
+    const freshCreds = await readCredentials();
+    const freshRt = freshCreds.claudeAiOauth?.refreshToken;
+    if (freshRt && freshRt !== oauth.refreshToken) {
+      console.log("[oauth] Refresh token rotated by Claude CLI, retrying with fresh token...");
+      result = await refreshWithCandidates(freshRt, candidates);
+      if (result.ok) {
+        Object.assign(creds, freshCreds);
+        Object.assign(oauth, freshCreds.claudeAiOauth);
+      }
+    }
+  }
+
+  if (!result.ok) {
+    cachedOAuthToken = null;
+    cachedTokenExpiresAt = 0;
+    cachedClientId = null;
+    const summary = result.attempts.map((a) => `${a.clientId.slice(0, 8)}…=${a.reason}`).join(", ");
+    const allInvalidGrant = result.attempts.every((a) => a.reason === "invalid_grant");
+    if (allInvalidGrant) {
+      throw new Error(`Claude session expired — refresh token rejected (invalid_grant) by all ${result.attempts.length} client ID(s). Run 'claude /login' to re-authenticate. [${summary}]`);
+    }
+    throw new Error(`Claude OAuth refresh failed for all client IDs. Update the Claude CLI and run 'claude /login', or set CLAUDE_CODE_OAUTH_CLIENT_ID. [${summary}]`);
+  }
+
+  // Cache the client ID that worked so future refreshes skip the candidate loop.
+  cachedClientId = result.clientId;
+  const tokens = result.tokens;
+  creds.claudeAiOauth = {
+    ...oauth,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    expiresAt: Date.now() + tokens.expiresIn * 1000,
+  };
+  await writeCredentials(creds);
+
+  cachedOAuthToken = tokens.accessToken;
+  cachedTokenExpiresAt = Date.now() + tokens.expiresIn * 1000;
+  console.log(`[oauth] Token refreshed via client ${result.clientId.slice(0, 8)}…, expires in ${(tokens.expiresIn / 3600).toFixed(1)}h`);
+  return tokens.accessToken;
 }
 
 async function getClaudeAuthEnv(): Promise<Record<string, string>> {
