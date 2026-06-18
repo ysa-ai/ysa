@@ -23,7 +23,7 @@ async function runShell(cmd: string): Promise<{ ok: boolean; stdout: string; std
 
 function installsPathForProject(projectRoot: string): string {
   const hash = Bun.hash(projectRoot).toString(16).slice(0, 8);
-  return join(homedir(), ".cache", "ysa-agent", "mise-installs", hash);
+  return join(homedir(), ".ysa", "mise-installs", hash);
 }
 
 function hashTools(tools: string[]): string {

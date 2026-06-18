@@ -16,16 +16,16 @@ describe("sandbox-run.sh", () => {
     expect(curlLine).toContain("--connect-timeout 5");
   });
 
-  it("ut-mise-1: mounts MISE_VOLUME (provided by caller) into container", () => {
-    // Volume creation is now handled by ensureMiseRuntimes() in the caller (runner.ts).
-    // sandbox-run.sh just reads MISE_VOLUME and mounts it.
-    expect(sandboxRunContent).toContain('MISE_VOLUME="${MISE_VOLUME:-mise-installs}"');
-    expect(sandboxRunContent).toContain("src=${MISE_VOLUME}");
+  it("ut-mise-1: bind-mounts MISE_INSTALL_PATH (provided by caller) read-only into container", () => {
+    // Pre-population is handled by the caller (project settings save); sandbox-run.sh
+    // just bind-mounts the host MISE_INSTALL_PATH at /usr/local/mise-installs:ro.
+    expect(sandboxRunContent).toContain('if [ -n "${MISE_INSTALL_PATH:-}" ]; then');
+    expect(sandboxRunContent).toContain('MISE_MOUNT_FLAG="-v ${MISE_INSTALL_PATH}:/usr/local/mise-installs:ro"');
   });
 
-  it("ut-mise-2: podman run mounts mise-installs at mise installs path with MISE_DATA_DIR", () => {
-    expect(sandboxRunContent).toContain("mise-installs");
-    expect(sandboxRunContent).toContain("dst=/home/agent/.local/share/mise/installs");
+  it("ut-mise-2: podman run mounts mise-installs at /usr/local/mise-installs with MISE_DATA_DIR", () => {
+    expect(sandboxRunContent).toContain("/usr/local/mise-installs");
+    expect(sandboxRunContent).toContain("${MISE_MOUNT_FLAG}");
     expect(sandboxRunContent).toContain("MISE_DATA_DIR=/home/agent/.local/share/mise");
   });
 

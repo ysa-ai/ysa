@@ -3,7 +3,7 @@ import { join, basename } from "path";
 import { getProvider } from "../providers";
 import { createWorktree, removeWorktree, prepareWorktree } from "./worktree";
 import { spawnSandbox, stopContainer, buildProjectImage, projectImageName, getImagePackagesHash, installDepsInShadow } from "./container";
-import { ensureProxy } from "./proxy";
+import { ensureProxy, isProxyRunning } from "./proxy";
 import { ensureMiseRuntimes } from "./mise";
 
 import { readYsaConfig } from "../cli/ysa-config";
@@ -184,7 +184,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
 
   // 7. Read .ysa.toml and resolve project image
   const ysaConfig = await readYsaConfig(config.projectRoot);
-  const aptPackages = ysaConfig.sandbox?.packages ?? [];
+  const aptPackages = [...new Set([...(ysaConfig.sandbox?.packages ?? []), ...(config.packages ?? [])])];
   const globalPackages = ysaConfig.sandbox?.global_packages ?? [];
   let agentImage = adapter.containerImage;
 
@@ -211,6 +211,15 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
     emitProgress("Starting network proxy...");
     const allBypassHosts = [...(adapter.bypassHosts ?? []), ...(config.bypassHosts ?? [])];
     await ensureProxy(config.proxyRules, allBypassHosts, config.serverPort);
+
+    if (!(await isProxyRunning())) {
+      failWith(new Error(
+        "Strict network mode requires the network proxy, but it is not running. " +
+        "Task aborted to avoid running without egress filtering. " +
+        "Check the sandbox-proxy image and `podman logs ysa-proxy`.",
+      ));
+      return handle;
+    }
   }
 
   // 9. Mise pre-install
@@ -264,7 +273,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   // 11. Spawn sandbox
   const env: Record<string, string> = { ...authEnv, ...containerConfig.envVars, ...config.extraEnv };
   if (config.promptUrl) env.PROMPT_URL = config.promptUrl;
-  const initCommands = ysaConfig.sandbox?.init_commands ?? [];
+  const initCommands = [...(ysaConfig.sandbox?.init_commands ?? []), ...(config.containerInitCommands ?? [])];
   if (initCommands.length > 0) env.CONTAINER_INIT_COMMANDS = initCommands.join(" ; ");
   if (config.bypassHosts?.length) env.BYPASS_HOSTS = config.bypassHosts.join(",");
 
@@ -296,6 +305,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
       containerMemory: config.containerMemory,
       containerCpus: config.containerCpus,
       containerPidsLimit: config.containerPidsLimit,
+      containerStackSize: config.containerStackSize,
     });
   } catch (err) {
     failWith(err instanceof Error ? err : new Error(String(err)));
