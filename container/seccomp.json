@@ -281,6 +281,17 @@
           "op": "SCMP_CMP_EQ"
         }
       ]
+    },
+    {
+      "comment": "headless Chromium (frontend_debug module) needs: capset to launch its subprocesses (drops caps), inotify for file watching, sysinfo, and pidfd_open (the bun runner uses it to manage the chromium child). All are in Docker's default seccomp allowlist; capset cannot raise privileges under no-new-privileges + cap-drop ALL, so this is not a downgrade below the standard baseline.",
+      "names": [
+        "capset",
+        "inotify_add_watch",
+        "inotify_init1",
+        "pidfd_open",
+        "sysinfo"
+      ],
+      "action": "SCMP_ACT_ALLOW"
     }
   ]
 }
