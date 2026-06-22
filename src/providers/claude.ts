@@ -1,14 +1,18 @@
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
-import { homedir } from "os";
+import { homedir, userInfo } from "os";
 import type { ProviderAdapter, CommandOpts, ParsedOutput, ContainerConfig, ProviderModel, ParsedLogEntry } from "./types";
 
 // ── Models ────────────────────────────────────────────────────────────────────
 
 const CLAUDE_MODELS: ProviderModel[] = [
+  { id: "claude-opus-4-8", name: "Opus 4.8", isDefault: false },
+  { id: "claude-opus-4-7", name: "Opus 4.7", isDefault: false },
+  { id: "claude-opus-4-6", name: "Opus 4.6", isDefault: false },
   { id: "claude-sonnet-4-6", name: "Sonnet 4.6", isDefault: true },
   { id: "claude-sonnet-4-5", name: "Sonnet 4.5", isDefault: false },
-  { id: "claude-opus-4-6", name: "Opus 4.6", isDefault: false },
+  { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5", isDefault: false },
+  { id: "claude-fable-5", name: "Fable 5", isDefault: false },
 ];
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -62,20 +66,29 @@ async function runGrep(cmd: string): Promise<string[]> {
 
 async function readCredentials(): Promise<Record<string, any>> {
   if (process.platform === "darwin") {
-    const proc = Bun.spawn(
+    // Prefer the username-keyed entry — that's the item the current Claude CLI
+    // (`claude /login`) reads and writes. An older/stale unnamed ("") entry must
+    // never shadow it, or the agent reads a revoked token that `claude /login`
+    // never refreshes. Mirrors shared/src/providers/claude.ts — keep in sync.
+    const account = userInfo().username;
+    const cmds = [
+      ["security", "find-generic-password", "-s", "Claude Code-credentials", "-a", account, "-w"],
       ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
+    ];
 
-    if (exitCode !== 0 || !stdout.trim()) {
-      throw new Error(
-        "Failed to read Claude OAuth token from macOS Keychain. Run 'claude /login' first.",
-      );
+    for (const cmd of cmds) {
+      const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+      const stdout = await new Response(proc.stdout).text();
+      if ((await proc.exited) !== 0 || !stdout.trim()) continue;
+      try {
+        const parsed = JSON.parse(stdout.trim());
+        if (parsed?.claudeAiOauth?.accessToken) return parsed;
+      } catch { continue; }
     }
 
-    return JSON.parse(stdout.trim());
+    throw new Error(
+      "Failed to read Claude OAuth token from macOS Keychain. Run 'claude /login' first.",
+    );
   } else {
     const credPath = join(homedir(), ".claude", ".credentials.json");
     try {
@@ -93,7 +106,7 @@ async function writeCredentials(creds: Record<string, any>): Promise<void> {
   if (process.platform === "darwin") {
     const json = JSON.stringify(creds);
     const proc = Bun.spawn(
-      ["security", "add-generic-password", "-U", "-s", "Claude Code-credentials", "-a", "", "-w", json],
+      ["security", "add-generic-password", "-U", "-s", "Claude Code-credentials", "-a", userInfo().username, "-w", json],
       { stdout: "pipe", stderr: "pipe" },
     );
     const exitCode = await proc.exited;

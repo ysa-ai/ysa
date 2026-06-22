@@ -90,7 +90,9 @@ GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
 GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 
 # -- Session volume ------------------------------------------------------------
-# SESSION_VOLUME can be overridden by caller (e.g. to reuse session across refine runs)
+# SESSION_VOLUME can be overridden by caller (e.g. to reuse session across refine runs).
+# Mounted at /home/agent/.claude/projects so only session transcripts persist; the rest
+# of .claude (settings.json, hooks) stays read-only and is never written to the volume.
 SESSION_VOLUME="${SESSION_VOLUME:-task-session-${TASK_ID}}"
 podman volume exists "$SESSION_VOLUME" 2>/dev/null || podman volume create "$SESSION_VOLUME" >/dev/null
 
@@ -321,7 +323,7 @@ podman run --rm \
   $SHADOW_MOUNTS \
   -v "$REPO_MOUNT" \
   --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
-  --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude:ro" \
+  --mount "type=volume,src=${SESSION_VOLUME},dst=/home/agent/.claude/projects" \
   ${MISE_MOUNT_FLAG} \
   -v "$SETTINGS_TMP:/home/agent/.claude/settings.json:ro" \
   "$IMAGE" \
@@ -378,13 +380,18 @@ podman run --rm \
       esac
     fi
 
+    # Container init/build signal: /tmp/ysa-init.done ALWAYS appears once init is
+    # resolved (contents = exit code; 0 = ready, non-zero = failed). The agent can
+    # wait on it before starting build-dependent servers; /tmp/ysa-init.log has output.
+    rm -f /tmp/ysa-init.done 2>/dev/null || true
     if [ -n \"\${CONTAINER_INIT_COMMANDS:-}\" ]; then
       # Run init commands in the BACKGROUND so the agent can start working immediately
       # (e.g. a project build can take minutes; the agent rarely needs it right away).
-      # Output goes to /tmp/ysa-init.log; /tmp/ysa-init.done holds the exit code on
-      # completion so the agent can wait for it before starting servers.
-      rm -f /tmp/ysa-init.done 2>/dev/null || true
       ( eval \"\$CONTAINER_INIT_COMMANDS\" > /tmp/ysa-init.log 2>&1; echo \"\$?\" > /tmp/ysa-init.done ) &
+    else
+      # No init commands — nothing to wait for; mark ready immediately.
+      : > /tmp/ysa-init.log
+      echo 0 > /tmp/ysa-init.done
     fi
 
     AGENT_BIN=\"\${AGENT_BINARY:-claude}\"
