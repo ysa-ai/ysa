@@ -281,6 +281,13 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   if (initCommands.length > 0) env.CONTAINER_INIT_COMMANDS = initCommands.join(" ; ");
   if (config.bypassHosts?.length) env.BYPASS_HOSTS = config.bypassHosts.join(",");
 
+  // Resumes append to the same log file, so capture how many lines already exist before this
+  // run starts. Result parsing then inspects only THIS run's output — otherwise a previous
+  // run's error_max_turns marker would misclassify a successful resume as failed.
+  const logBaseline = (await fileExists(logPath))
+    ? ((await readFile(logPath, "utf-8")).match(/\n/g)?.length ?? 0)
+    : 0;
+
   emitProgress("Starting agent...");
   let proc: Awaited<ReturnType<typeof spawnSandbox>>;
   try {
@@ -336,7 +343,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
       const durationMs = Date.now() - startTime;
 
       const parsed = await fileExists(logPath)
-        ? adapter.parseOutput(await readFile(logPath, "utf-8"))
+        ? adapter.parseOutput(await readFile(logPath, "utf-8"), logBaseline)
         : { sessionId: null, maxTurnsReached: false, agentAborted: false, abortReason: null, lastError: null };
 
       if (intentionallyStopped) {
