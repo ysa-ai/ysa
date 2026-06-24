@@ -27,7 +27,8 @@ export async function runInteractive(config: RunConfig): Promise<void> {
   }
 
   const adapter = getProvider(config.provider ?? "claude");
-  const authEnv = await adapter.getAuthEnv();
+  const callerSuppliedAuth = adapter.authEnvKeys.some((key) => config.extraEnv?.[key]);
+  const authEnv = callerSuppliedAuth ? {} : await adapter.getAuthEnv();
 
   const agentAuthEnvFlags = adapter.authEnvKeys
     .filter((key) => authEnv[key])

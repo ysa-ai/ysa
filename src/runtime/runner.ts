@@ -159,8 +159,12 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   }
 
   // 3. Resolve adapter + get auth
+  // When the caller already supplied the provider's auth via extraEnv (API/library
+  // mode), trust it and skip the keystore. CLI mode supplies no auth in extraEnv, so
+  // it falls back to getAuthEnv() (keystore / OAuth) as before.
   const adapter = getProvider(config.provider ?? "claude");
-  const authEnv = await adapter.getAuthEnv();
+  const callerSuppliedAuth = adapter.authEnvKeys.some((key) => config.extraEnv?.[key]);
+  const authEnv = callerSuppliedAuth ? {} : await adapter.getAuthEnv();
 
   // 4. Build auth env flags string
   const agentAuthEnvFlags = adapter.authEnvKeys
