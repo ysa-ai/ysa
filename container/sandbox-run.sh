@@ -330,6 +330,13 @@ podman run --rm \
   -c "
     export HOME=/home/agent
 
+    # Claude resolves --resume by a project bucket derived from the current
+    # directory, so the agent MUST start in /workspace (where the session was
+    # created). The image WORKDIR is /workspace, but make it explicit and fail
+    # loudly if the worktree mount is missing — otherwise the agent silently
+    # starts in / and reports No conversation found on resume.
+    cd /workspace || { echo 'FATAL: /workspace is not mounted' >&2; exit 1; }
+
     # Progress helper (JSON to stdout -> tee -> LOG_FILE)
     _progress() { printf '{\"type\":\"system\",\"subtype\":\"progress\",\"message\":\"%s\"}\\n' \"\$1\"; }
 
