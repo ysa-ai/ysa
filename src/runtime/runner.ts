@@ -95,6 +95,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   const gitDir = join(config.projectRoot, ".git");
   const logDir = join(config.projectRoot, ".ysa", "logs");
   const logPath = join(logDir, `${taskId}.log`);
+  const diagDir = join(logDir, taskId);
   const startTime = Date.now();
 
   const emitProgress = (msg: string) => {
@@ -141,6 +142,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
   };
 
   await mkdir(logDir, { recursive: true });
+  await mkdir(diagDir, { recursive: true });
   await mkdir(config.worktreePrefix, { recursive: true });
 
   // 1. Create worktree (skip if resuming)
@@ -300,6 +302,7 @@ export async function runTask(config: RunConfig, opts?: RunOptions): Promise<Tas
       cliArgs,
       env,
       logPath,
+      diagDir,
       networkPolicy: config.networkPolicy,
       agentBinary: adapter.agentBinary,
       agentImage,
