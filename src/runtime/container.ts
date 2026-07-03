@@ -409,11 +409,13 @@ export interface SpawnSandboxOpts {
   containerCpus?: number;      // e.g. 4 — overrides sandbox-run.sh default of 2
   containerPidsLimit?: number; // e.g. 1024 — overrides sandbox-run.sh default of 512
   containerStackSize?: number; // e.g. 67108864 — ulimit stack in bytes (default: OS default ~8MB)
+  diagDir?: string;            // host dir bind-mounted at /ysa-logs:rw for container-written diagnostics (e.g. Chromium netlog)
 }
 
 export async function spawnSandbox(opts: SpawnSandboxOpts) {
   const env: Record<string, string> = { ...process.env as Record<string, string>, ...opts.env };
   if (opts.logPath) env.LOG_FILE = opts.logPath;
+  if (opts.diagDir) env.DIAG_DIR = opts.diagDir;
   if (opts.networkPolicy) env.NETWORK_POLICY = opts.networkPolicy;
   if (opts.agentBinary) env.AGENT_BINARY = opts.agentBinary;
   if (opts.agentInitScript) env.AGENT_INIT_SCRIPT = opts.agentInitScript;

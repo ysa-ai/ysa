@@ -320,6 +320,7 @@ podman run --rm \
   -e CONTAINER_STACK_SIZE="${CONTAINER_STACK_SIZE:-}" \
   -e BYPASS_HOSTS="${BYPASS_HOSTS:-}" \
   -v "$WORKTREE:/workspace:rw" \
+  ${DIAG_DIR:+-v "$DIAG_DIR:/ysa-logs:rw"} \
   $SHADOW_MOUNTS \
   -v "$REPO_MOUNT" \
   --tmpfs /home/agent:rw,nosuid,nodev,size=256m,mode=777 \
