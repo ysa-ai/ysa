@@ -1,6 +1,7 @@
-import { readFile, stat } from "fs/promises";
+import { readFile, stat, mkdtemp, rm } from "fs/promises";
 import { existsSync } from "fs";
-import { resolve, basename } from "path";
+import { resolve, basename, join } from "path";
+import { tmpdir } from "os";
 import { getProvider } from "../providers";
 
 async function fileExists(path: string): Promise<boolean> {
@@ -128,20 +129,25 @@ export async function buildProjectImage(
     ? [...packages].sort().join(",") + "|" + [...globalPackages].sort().join(",")
     : [...packages].sort().join(",");
   const packagesHash = Bun.hash(hashInput).toString(16);
-  const proc = Bun.spawn(
-    ["podman", "build", "-t", targetImage, "--label", `ysa.packages=${packagesHash}`, "-f", "-", "."],
-    { stdin: new TextEncoder().encode(dockerfile), stdout: "pipe", stderr: "pipe" },
-  );
+  const ctxDir = await mkdtemp(join(tmpdir(), "ysa-build-ctx-"));
+  try {
+    const proc = Bun.spawn(
+      ["podman", "build", "-t", targetImage, "--label", `ysa.packages=${packagesHash}`, "-f", "-", ctxDir],
+      { stdin: new TextEncoder().encode(dockerfile), stdout: "pipe", stderr: "pipe" },
+    );
 
-  const errLines: string[] = [];
-  await Promise.all([
-    streamLines(proc.stdout, (line) => { onLog?.(line); }),
-    streamLines(proc.stderr, (line) => { onLog?.(line); errLines.push(line); }),
-    proc.exited,
-  ]);
+    const errLines: string[] = [];
+    await Promise.all([
+      streamLines(proc.stdout, (line) => { onLog?.(line); }),
+      streamLines(proc.stderr, (line) => { onLog?.(line); errLines.push(line); }),
+      proc.exited,
+    ]);
 
-  const ok = proc.exitCode === 0;
-  return { ok, error: ok ? undefined : errLines.join("\n").trim() };
+    const ok = proc.exitCode === 0;
+    return { ok, error: ok ? undefined : errLines.join("\n").trim() };
+  } finally {
+    await rm(ctxDir, { recursive: true, force: true });
+  }
 }
 
 export async function getImagePackagesHash(image: string): Promise<string | null> {
