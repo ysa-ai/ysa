@@ -1,5 +1,10 @@
 # Your Secure Agent
 
+> [!WARNING]
+> **This project is no longer maintained and has been archived (September 2026).**
+> Local sandboxing for coding agents is now well covered by tools such as [Docker Sandboxes](https://www.docker.com/products/docker-sandboxes/) and Anthropic's [sandbox-runtime](https://github.com/anthropics/sandbox-runtime).
+> The code stays available under the Apache 2.0 license — feel free to fork it.
+
 [![npm](https://img.shields.io/npm/v/@ysa-ai/ysa)](https://www.npmjs.com/package/@ysa-ai/ysa)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://open.ysa.run)
